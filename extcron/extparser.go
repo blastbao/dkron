@@ -15,6 +15,7 @@ type ExtParser struct {
 }
 
 // NewParser creates an ExtParser instance
+// 启用 second 字段
 func NewParser() cron.ScheduleParser {
 	return ExtParser{cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)}
 }
@@ -22,6 +23,7 @@ func NewParser() cron.ScheduleParser {
 // Parse parses a cron schedule specification. It accepts the cron spec with
 // mandatory seconds parameter, descriptors and the custom descriptors
 // "@at <date>" and "@manually".
+// 添加了自定义解析的部分
 func (p ExtParser) Parse(spec string) (cron.Schedule, error) {
 	if spec == "@manually" {
 		return At(time.Time{}), nil

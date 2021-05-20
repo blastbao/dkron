@@ -36,6 +36,7 @@ func Execute() {
 }
 
 func init() {
+	// 初始化 config
 	cobra.OnInitialize(initConfig)
 
 	dkronCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file path")

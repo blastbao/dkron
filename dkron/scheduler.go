@@ -30,6 +30,7 @@ type Scheduler struct {
 }
 
 // NewScheduler creates a new Scheduler instance
+// 创建调度器
 func NewScheduler(logger *logrus.Entry) *Scheduler {
 	schedulerStarted.Set(0)
 	return &Scheduler{
@@ -42,14 +43,17 @@ func NewScheduler(logger *logrus.Entry) *Scheduler {
 
 // Start the cron scheduler, adding its corresponding jobs and
 // executing them on time.
+// 启动调度器
 func (s *Scheduler) Start(jobs []*Job, agent *Agent) error {
 	s.Cron = cron.New(cron.WithParser(extcron.NewParser()))
 
 	metrics.IncrCounter([]string{"scheduler", "start"}, 1)
 	for _, job := range jobs {
 		job.Agent = agent
+		// 添加所有 Job
 		s.AddJob(job)
 	}
+	// 开始定时执行
 	s.Cron.Start()
 	s.Started = true
 	schedulerStarted.Set(1)
@@ -102,6 +106,7 @@ func (s *Scheduler) GetEntry(jobName string) (cron.Entry, bool) {
 }
 
 // AddJob Adds a job to the cron scheduler
+// 调度器添加 Job
 func (s *Scheduler) AddJob(job *Job) error {
 	// Check if the job is already set and remove it if exists
 	if _, ok := s.EntryJobMap.Load(job.Name); ok {
@@ -127,12 +132,16 @@ func (s *Scheduler) AddJob(job *Job) error {
 		schedule = "CRON_TZ=" + job.Timezone + " " + schedule
 	}
 
+	// 为 cron 添加一个 job
+	// Job 的 Run 是 cron 触发的执行方法
 	id, err := s.Cron.AddJob(schedule, job)
 	if err != nil {
 		return err
 	}
+	// 储存 cron 的 id
 	s.EntryJobMap.Store(job.Name, id)
 
+	// expvar
 	cronInspect.Set(job.Name, job)
 	metrics.IncrCounterWithLabels([]string{"scheduler", "job_add"}, 1, []metrics.Label{{Name: "job", Value: job.Name}})
 

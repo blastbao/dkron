@@ -16,8 +16,11 @@ const (
 // nodeJoin is used to handle join events on the serf cluster
 func (a *Agent) nodeJoin(me serf.MemberEvent) {
 	for _, m := range me.Members {
+		// 是否是 dkron server
 		ok, parts := isServer(m)
 		if !ok {
+			// 实际部署中有报错
+			// 非 server 模式的 agent 跳过
 			a.logger.WithField("member", m.Name).Warn("non-server in gossip pool")
 			continue
 		}
@@ -28,6 +31,7 @@ func (a *Agent) nodeJoin(me serf.MemberEvent) {
 		a.peerLock.Lock()
 		existing := a.peers[parts.Region]
 		for idx, e := range existing {
+			// 判断是否已经在 slice 中存在
 			if e.Name == parts.Name {
 				existing[idx] = parts
 				found = true
@@ -35,17 +39,20 @@ func (a *Agent) nodeJoin(me serf.MemberEvent) {
 			}
 		}
 
+		// 添加进 slice
 		// Add ot the list if not known
 		if !found {
 			a.peers[parts.Region] = append(existing, parts)
 		}
 
+		// 储存同一个 region 的 servers
 		// Check if a local peer
 		if parts.Region == a.config.Region {
 			a.localPeers[raft.ServerAddress(parts.Addr.String())] = parts
 		}
 		a.peerLock.Unlock()
 
+		// 初始化
 		// If we still expecting to bootstrap, may need to handle this
 		if a.config.BootstrapExpect != 0 {
 			a.maybeBootstrap()
@@ -74,6 +81,7 @@ func (a *Agent) maybeBootstrap() {
 
 	// Bootstrap can only be done if there are no committed logs,
 	// remove our expectations of bootstrapping
+	// 存在 raft commit 日志, 不需要 bootstrap
 	if index != 0 {
 		a.config.BootstrapExpect = 0
 		return
@@ -86,6 +94,7 @@ func (a *Agent) maybeBootstrap() {
 	for _, member := range members {
 		valid, p := isServer(member)
 		if !valid {
+			// 跳过非 dkron server 的 member
 			continue
 		}
 		if p.Region != a.config.Region {
@@ -121,7 +130,7 @@ func (a *Agent) maybeBootstrap() {
 		addr := server.Addr.String()
 		addrs = append(addrs, addr)
 		id := raft.ServerID(server.ID)
-		suffrage := raft.Voter
+		suffrage := raft.Voter // 允许仲裁的角色
 		peer := raft.Server{
 			ID:       id,
 			Address:  raft.ServerAddress(addr),
@@ -131,6 +140,7 @@ func (a *Agent) maybeBootstrap() {
 	}
 	a.logger.Info("agent: found expected number of peers, attempting to bootstrap cluster...",
 		"peers", strings.Join(addrs, ","))
+	// raft 集群初始化
 	future := a.raft.BootstrapCluster(configuration)
 	if err := future.Error(); err != nil {
 		a.logger.WithError(err).Error("agent: failed to bootstrap cluster")

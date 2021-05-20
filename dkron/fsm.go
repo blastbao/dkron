@@ -42,6 +42,7 @@ type dkronFSM struct {
 }
 
 // NewFSM is used to construct a new FSM with a blank state
+// 实现 raft.FSM
 func newFSM(store Storage, logAppliers LogAppliers, logger *logrus.Entry) *dkronFSM {
 	return &dkronFSM{
 		store:       store,
@@ -51,6 +52,7 @@ func newFSM(store Storage, logAppliers LogAppliers, logger *logrus.Entry) *dkron
 }
 
 // Apply applies a Raft log entry to the key-value store.
+// 创建/同步一条 Log 到 state
 func (d *dkronFSM) Apply(l *raft.Log) interface{} {
 	buf := l.Data
 	msgType := MessageType(buf[0])
@@ -77,10 +79,12 @@ func (d *dkronFSM) Apply(l *raft.Log) interface{} {
 }
 
 func (d *dkronFSM) applySetJob(buf []byte) interface{} {
+	// 解析 protobuf 序列化的 bytes
 	var pj dkronpb.Job
 	if err := proto.Unmarshal(buf, &pj); err != nil {
 		return err
 	}
+	// protobuf 到 golang struct 转换
 	job := NewJobFromProto(&pj)
 	if err := d.store.SetJob(job, false); err != nil {
 		return err
@@ -127,6 +131,8 @@ func (d *dkronFSM) applySetExecution(buf []byte) interface{} {
 	}
 	return key
 }
+
+// FSM 的快照和恢复方法，使用 buntdb 的 load/save 方法。
 
 // Snapshot returns a snapshot of the key-value store. We wrap
 // the things we need in dkronSnapshot and then send that over to Persist.

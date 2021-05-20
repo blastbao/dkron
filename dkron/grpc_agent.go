@@ -49,6 +49,7 @@ func NewAgentServer(agent *Agent, logger *logrus.Entry) types.AgentServer {
 
 // AgentRun is called when an agent starts running a job and lasts all execution,
 // the agent will stream execution progress to the server.
+// Dkron agent 执行任务, GRPC 客户端推流
 func (as *AgentServer) AgentRun(req *types.AgentRunRequest, stream types.Agent_AgentRunServer) error {
 	defer metrics.MeasureSince([]string{"grpc_agent", "agent_run"}, time.Now())
 
@@ -70,6 +71,7 @@ func (as *AgentServer) AgentRun(req *types.AgentRunRequest, stream types.Agent_A
 	execution.StartedAt = ptypes.TimestampNow()
 	execution.NodeName = as.agent.config.NodeName
 
+	// 发送执行前状态
 	if err := stream.Send(&types.AgentRunStream{
 		Execution: execution,
 	}); err != nil {
@@ -81,12 +83,16 @@ func (as *AgentServer) AgentRun(req *types.AgentRunRequest, stream types.Agent_A
 	}
 
 	// Check if executor exists
+	// 找到对应的执行插件
 	if executor, ok := as.agent.ExecutorPlugins[jex]; ok {
 		as.logger.WithField("plugin", jex).Debug("grpc_agent: calling executor plugin")
 		runningExecutions.Store(execution.GetGroup(), execution)
+		// go-plugin grpc 调用执行
 		out, err := executor.Execute(&types.ExecuteRequest{
 			JobName: job.Name,
 			Config:  exc,
+			// callback, 将执行输出结果赋值到 output, 通过 stream 发送给服务端
+			// ref: https://github.com/distribworks/dkron/pull/719
 		}, &statusAgentHelper{
 			stream:    stream,
 			execution: execution,
@@ -111,22 +117,27 @@ func (as *AgentServer) AgentRun(req *types.AgentRunRequest, stream types.Agent_A
 		output.Write([]byte("grpc_agent: Specified executor is not present"))
 	}
 
+	// 执行完成
 	execution.FinishedAt = ptypes.TimestampNow()
 	execution.Success = success
 	execution.Output = output.Bytes()
 
 	runningExecutions.Delete(execution.GetGroup())
 
+	// 发送最终状态
 	// Send the final execution
 	if err := stream.Send(&types.AgentRunStream{
 		Execution: execution,
 	}); err != nil {
+		// 有可能 server 没能接收到最后执行状态
 		// In case of error means that maybe the server is gone so fallback to ExecutionDone
 		as.logger.WithError(err).WithField("job", job.Name).Error("grpc_agent: error sending the final execution, falling back to ExecutionDone")
+		// TCP 连接筛选一个 server
 		rpcServer, err := as.agent.checkAndSelectServer()
 		if err != nil {
 			return err
 		}
+		// 调用执行完成
 		return as.agent.GRPCClient.ExecutionDone(rpcServer, NewExecutionFromProto(execution))
 	}
 

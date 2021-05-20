@@ -154,12 +154,14 @@ func (a *Agent) Start() error {
 	// Normalize configured addresses
 	a.config.normalizeAddrs()
 
+	// 初始化 serf
 	s, err := a.setupSerf()
 	if err != nil {
 		return fmt.Errorf("agent: Can not setup serf, %s", err)
 	}
 	a.serf = s
 
+	// Serf 加入集群
 	// start retry join
 	if len(a.config.RetryJoinLAN) > 0 {
 		a.retryJoinLAN()
@@ -179,6 +181,7 @@ func (a *Agent) Start() error {
 		a.config.AdvertiseRPCPort = a.config.RPCPort
 	}
 
+	// 监听 RPC 调用端口
 	// Create a listener for RPC subsystem
 	addr := a.bindRPCAddr()
 	l, err := net.Listen("tcp", addr)
@@ -187,21 +190,32 @@ func (a *Agent) Start() error {
 	}
 	a.listener = l
 
+	// 启动模式
 	if a.config.Server {
+		// server 模式
+		// 1. 开启 raft 选举, raft 持久化储存
+		// 2. 启动调度器
+		// 3. 开启 GRPC Server
+		// 4. buntdb 内存数据库
 		a.StartServer()
 	} else {
+		// agent 模式
 		opts := []grpc.ServerOption{}
 		if a.TLSConfig != nil {
 			tc := credentials.NewTLS(a.TLSConfig)
 			opts = append(opts, grpc.Creds(tc))
 		}
 
+		// agent/server 都会启动 grpc server
+		// agent 模式只注册 agent 接口
+		// server 包含 dkron/agetn 接口
 		grpcServer := grpc.NewServer(opts...)
 		as := NewAgentServer(a, a.logger)
 		proto.RegisterAgentServer(grpcServer, as)
 		go grpcServer.Serve(l)
 	}
 
+	// 创建 RPC client
 	if a.GRPCClient == nil {
 		a.GRPCClient = NewGRPCClient(nil, a, a.logger)
 	}
@@ -211,6 +225,7 @@ func (a *Agent) Start() error {
 	tags["port"] = strconv.Itoa(a.config.AdvertiseRPCPort)
 	a.serf.SetTags(tags)
 
+	// 处理事件
 	go a.eventLoop()
 	a.ready = true
 
@@ -260,9 +275,11 @@ func (a *Agent) Stop() error {
 	return nil
 }
 
+// 初始化 Raft
 func (a *Agent) setupRaft() error {
 	if a.config.BootstrapExpect > 0 {
 		if a.config.BootstrapExpect == 1 {
+			// 进行 bootstrap
 			a.config.Bootstrap = true
 		}
 	}
@@ -272,12 +289,16 @@ func (a *Agent) setupRaft() error {
 		logger = a.logger.Logger.Writer()
 	}
 
+	// 创建 raft transport
+	// （Raft 节点间的通信通道），节点之间需要通过这个通道来进行日志同步、领导者选举等等
+	// 方法内部启动协程 listen listener
 	transport := raft.NewNetworkTransport(a.raftLayer, 3, raftTimeout, logger)
 	a.raftTransport = transport
 
 	config := raft.DefaultConfig()
 
 	// Raft performance
+	// 默认值为 1
 	raftMultiplier := a.config.RaftMultiplier
 	if raftMultiplier < 1 || raftMultiplier > 10 {
 		return fmt.Errorf("raft-multiplier cannot be %d. Must be between 1 and 10", raftMultiplier)
@@ -302,6 +323,8 @@ func (a *Agent) setupRaft() error {
 		snapshots = raft.NewDiscardSnapshotStore()
 	} else {
 		var err error
+
+		// （快照存储，用来存储节点的快照信息），也就是压缩后的日志数据
 		// Create the snapshot store. This allows the Raft to truncate the log to
 		// mitigate the issue of having an unbounded replicated log.
 		snapshots, err = raft.NewFileSnapshotStore(filepath.Join(a.config.DataDir, "raft"), 3, logger)
@@ -315,16 +338,20 @@ func (a *Agent) setupRaft() error {
 			return fmt.Errorf("error creating new raft store: %s", err)
 		}
 		a.raftStore = s
+		// （稳定存储，用来存储 Raft 集群的节点信息等），比如，当前任期编号、最新投票时的任期编号等
 		stableStore = s
 
+		// 512 size 内存缓存
 		// Wrap the store in a LogCache to improve performance
 		cacheStore, err := raft.NewLogCache(raftLogCacheSize, s)
 		if err != nil {
 			s.Close()
 			return err
 		}
+		// 用来存储 Raft 的日志
 		logStore = cacheStore
 
+		// 一般不会创建 peers.json 这个文件
 		// Check for peers.json file for recovery
 		peersFile := filepath.Join(a.config.DataDir, "raft", "peers.json")
 		if _, err := os.Stat(peersFile); err == nil {
@@ -350,6 +377,7 @@ func (a *Agent) setupRaft() error {
 		}
 	}
 
+	// 一般我们使用 bootstrap-expect, 这里忽略
 	// If we are in bootstrap or dev mode and the state is clean then we can
 	// bootstrap now.
 	if a.config.Bootstrap || a.config.DevMode {
@@ -374,11 +402,17 @@ func (a *Agent) setupRaft() error {
 
 	// Instantiate the Raft systems. The second parameter is a finite state machine
 	// which stores the actual kv pairs and is operated upon through Apply().
+	//	参数: 实现了 Storage 的 DB, 默认 nil, logger 
+	// 创建实现 raft FSM 接口
+	// raft 只是定义了一个接口，最终交给应用层实现。应用层收到 Log 后按 业务需求 还原为 应用数据保存起来
+	//	Raft 启动时 便 Raft.runFSM 起一个goroutine 从 fsmMutateCh channel 消费log ==> FSM.Apply
 	fsm := newFSM(a.Store, a.ProAppliers, a.logger)
+	// 创建 raft 节点
 	rft, err := raft.NewRaft(config, fsm, logStore, stableStore, snapshots, transport)
 	if err != nil {
 		return fmt.Errorf("new raft: %s", err)
 	}
+	// 选举 leader 信号 chan
 	a.leaderCh = rft.LeaderCh()
 	a.raft = rft
 
@@ -415,9 +449,12 @@ func (a *Agent) setupSerf() (*serf.Serf, error) {
 	serfConfig := serf.DefaultConfig()
 	serfConfig.Init()
 
+	// metadata
 	serfConfig.Tags = a.config.Tags
 	serfConfig.Tags["role"] = "dkron"
+	// defaults to "dc1"
 	serfConfig.Tags["dc"] = a.config.Datacenter
+	// defaults to "global"
 	serfConfig.Tags["region"] = a.config.Region
 	serfConfig.Tags["version"] = Version
 	if a.config.Server {
@@ -430,6 +467,7 @@ func (a *Agent) setupSerf() (*serf.Serf, error) {
 		serfConfig.Tags["expect"] = fmt.Sprintf("%d", a.config.BootstrapExpect)
 	}
 
+	// gossip 
 	switch config.Profile {
 	case "lan":
 		serfConfig.MemberlistConfig = memberlist.DefaultLANConfig()
@@ -493,8 +531,10 @@ func (a *Agent) SetConfig(c *Config) {
 }
 
 // StartServer launch a new dkron server process
+// 启动 Server
 func (a *Agent) StartServer() {
 	if a.Store == nil {
+		// 初始化内存 DB
 		s, err := NewStore(a.logger)
 		if err != nil {
 			a.logger.WithError(err).Fatal("dkron: Error initializing store")
@@ -502,17 +542,21 @@ func (a *Agent) StartServer() {
 		a.Store = s
 	}
 
+	// 创建调度器, 只有 server 有调度器
 	a.sched = NewScheduler(a.logger)
 
 	if a.HTTPTransport == nil {
 		a.HTTPTransport = NewTransport(a, a.logger)
 	}
+	// 创建 HTTP API 接口
 	a.HTTPTransport.ServeHTTP()
 
+	// 创建端口复用 cmux
 	// Create a cmux object.
 	tcpm := cmux.New(a.listener)
 	var grpcl, raftl net.Listener
 
+	// 默认不启用 TLS
 	// If TLS config present listen to TLS
 	if a.TLSConfig != nil {
 		// Create a RaftLayer with TLS
@@ -538,38 +582,47 @@ func (a *Agent) StartServer() {
 		}()
 	} else {
 		// Declare a plain RaftLayer
+		// 实现 raft.StreamLayer
 		a.raftLayer = NewRaftLayer(a.logger)
 
 		// Declare the match for gRPC
+		// cmux match grpc 通信
 		grpcl = tcpm.MatchWithWriters(cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc"))
 
 		// Declare the match for raft RPC
+		// raft TCP 通信
 		raftl = tcpm.Match(cmux.Any())
 	}
 
+	// 创建 GRPC Server
 	if a.GRPCServer == nil {
 		a.GRPCServer = NewGRPCServer(a, a.logger)
 	}
 
+	// 启动 GRPC Server
 	if err := a.GRPCServer.Serve(grpcl); err != nil {
 		a.logger.WithError(err).Fatal("agent: RPC server failed to start")
 	}
 
+	// 绑定 net Listener
 	if err := a.raftLayer.Open(raftl); err != nil {
 		a.logger.Fatal(err)
 	}
 
+	// 启动 Raft
 	if err := a.setupRaft(); err != nil {
 		a.logger.WithError(err).Fatal("agent: Raft layer failed to start")
 	}
 
 	// Start serving everything
 	go func() {
+		// 正式开始 listen
 		if err := tcpm.Serve(); err != nil {
 			a.logger.Fatal(err)
 		}
 	}()
 	go a.monitorLeadership()
+	// 匿名上报
 	a.startReporter()
 }
 
@@ -617,6 +670,7 @@ func (a *Agent) Servers() (members []*ServerParts) {
 }
 
 // LocalServers returns a list of the local known server
+// 返回正常运行的 dkron server 列表
 func (a *Agent) LocalServers() (members []*ServerParts) {
 	for _, member := range a.serf.Members() {
 		ok, parts := isServer(member)
@@ -631,12 +685,19 @@ func (a *Agent) LocalServers() (members []*ServerParts) {
 }
 
 // Listens to events from Serf and handle the event.
+// 处理 Serf 事件
 func (a *Agent) eventLoop() {
+	// 只读的 Shutdown channel
 	serfShutdownCh := a.serf.ShutdownCh()
 	a.logger.Info("agent: Listen for events")
 	for {
 		select {
+			// Serf event 事件处理
 		case e := <-a.eventCh:
+			// 有三种事件 MemberEvent/UserEvent/Query
+			// 这里只处理 MemberEvent, 只使用 Serf 做集群 member 的管理
+			// 实际运行时主要的 MemberEvent 事件有 update/failed/join
+			// 没有使用到自定义 event 以及 query 命令
 			a.logger.WithField("event", e.String()).Info("agent: Received event")
 			metrics.IncrCounter([]string{"agent", "event_received", e.String()}, 1)
 
@@ -650,6 +711,7 @@ func (a *Agent) eventLoop() {
 					}).Debug("agent: Member event")
 				}
 
+				// pro 功能...
 				if a.MemberEventHandler != nil {
 					a.MemberEventHandler(e)
 				}
@@ -711,6 +773,8 @@ func (a *Agent) processFilteredNodes(job *Job) (map[string]string, map[string]st
 		}
 	}
 
+	// 筛选匹配 tags 的 nodes
+	// cardinality 为节点数量
 	execNodes, tags, cardinality, err := filterNodes(execNodes, tags)
 	if err != nil {
 		return nil, nil, err
@@ -722,6 +786,7 @@ func (a *Agent) processFilteredNodes(job *Job) (map[string]string, map[string]st
 		names = append(names, name)
 	}
 
+	// 打乱循序
 	nodes := make(map[string]string)
 	rand.Seed(time.Now().UnixNano())
 	for ; cardinality > 0; cardinality-- {
@@ -808,15 +873,19 @@ func (a *Agent) bindRPCAddr() string {
 
 // applySetJob is a helper method to be called when
 // a job property need to be modified from the leader.
+// Header 发起设置 Job -> Raft Log Apply
 func (a *Agent) applySetJob(job *proto.Job) error {
+	// encode bytes
 	cmd, err := Encode(SetJobType, job)
 	if err != nil {
 		return err
 	}
+	// 返回 raft apply future
 	af := a.raft.Apply(cmd, raftTimeout)
 	if err := af.Error(); err != nil {
 		return err
 	}
+	// 返回 FSM.Apply 的结果
 	res := af.Response()
 	switch res {
 	case ErrParentJobNotFound:

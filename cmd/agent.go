@@ -42,6 +42,7 @@ It also runs a web UI.`,
 func init() {
 	dkronCmd.AddCommand(agentCmd)
 
+	// 添加 cli flags
 	agentCmd.Flags().AddFlagSet(dkron.ConfigFlagSet())
 	viper.BindPFlags(agentCmd.Flags())
 }
@@ -52,6 +53,7 @@ func agentRun(args ...string) error {
 		LogLevel: config.LogLevel,
 		NodeName: config.NodeName,
 	}
+	// 在目录下查找, 加载插件 (启动 plugin server, 创建 rpc client)
 	if err := p.DiscoverPlugins(); err != nil {
 		log.Fatal(err)
 	}
@@ -60,11 +62,15 @@ func agentRun(args ...string) error {
 		Executors:  p.Executors,
 	}
 
+	// withXXX 是 options func
+	// config 在 cobra init 时通过 viper 加载
 	agent = dkron.NewAgent(config, dkron.WithPlugins(plugins))
+	// 启动 dkron
 	if err := agent.Start(); err != nil {
 		return err
 	}
 
+	// 平滑下线
 	exit := handleSignals()
 	if exit != 0 {
 		return fmt.Errorf("exit status: %d", exit)

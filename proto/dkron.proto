@@ -151,5 +151,6 @@ message AgentRunRequest {
 }
 
 service Agent {
+  // 客户端推送服务器流
   rpc AgentRun (AgentRunRequest) returns (stream AgentRunStream);
 }

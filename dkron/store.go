@@ -64,6 +64,7 @@ type kv struct {
 }
 
 // NewStore creates a new Storage instance.
+// 创建基于内存的 buntdb
 func NewStore(logger *logrus.Entry) (*Store, error) {
 	db, err := buntdb.Open(":memory:")
 	db.CreateIndex("name", jobsPrefix+":*", buntdb.IndexJSON("name"))
@@ -90,16 +91,20 @@ func NewStore(logger *logrus.Entry) (*Store, error) {
 	return store, nil
 }
 
+// 储存 job
 func (s *Store) setJobTxFunc(pbj *dkronpb.Job) func(tx *buntdb.Tx) error {
 	return func(tx *buntdb.Tx) error {
 		jobKey := fmt.Sprintf("%s:%s", jobsPrefix, pbj.Name)
 
+		// json 序列化
+		// 备注: 都已经是 proto struct 了, 序列化成 protobuf 不就好了吗?
 		jb, err := json.Marshal(pbj)
 		if err != nil {
 			return err
 		}
 		s.logger.WithField("job", pbj.Name).Debug("store: Setting job")
 
+		// 储存到 db
 		if _, _, err := tx.Set(jobKey, string(jb), nil); err != nil {
 			return err
 		}
@@ -115,9 +120,11 @@ func (s *Store) DB() *buntdb.DB {
 
 // SetJob stores a job in the storage
 func (s *Store) SetJob(job *Job, copyDependentJobs bool) error {
+	// pbej 包含默认值
 	var pbej dkronpb.Job
 	var ej *Job
 
+	// 校验 job 必要字段
 	if err := job.Validate(); err != nil {
 		return err
 	}
@@ -130,15 +137,19 @@ func (s *Store) SetJob(job *Job, copyDependentJobs bool) error {
 	}
 
 	err := s.db.Update(func(tx *buntdb.Tx) error {
+		// 如果已经储存则填充 pbej
 		// Get if the requested job already exist
 		err := s.getJobTxFunc(job.Name, &pbej)(tx)
 		if err != nil && err != buntdb.ErrNotFound {
 			return err
 		}
 
+		// 获取已存在的 job
 		ej = NewJobFromProto(&pbej)
 
+		// 不存在的话 name 为空字符串
 		if ej.Name != "" {
+			// 填充 job 运行时 metadata
 			// When the job runs, these status vars are updated
 			// otherwise use the ones that are stored
 			if ej.LastError.After(job.LastError) {
@@ -371,8 +382,10 @@ func (s *Store) GetJob(name string, options *JobOptions) (*Job, error) {
 }
 
 // This will allow reuse this code to avoid nesting transactions
+// 返回 func 接收 tx 作为参数, 复用一个事务
 func (s *Store) getJobTxFunc(name string, pbj *dkronpb.Job) func(tx *buntdb.Tx) error {
 	return func(tx *buntdb.Tx) error {
+		// 查找不到会返回 ErrNotFound
 		item, err := tx.Get(fmt.Sprintf("%s:%s", jobsPrefix, name))
 		if err != nil {
 			return err

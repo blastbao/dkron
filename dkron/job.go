@@ -223,6 +223,7 @@ func (j *Job) ToProto() *proto.Job {
 }
 
 // Run the job
+// job 的 run 方法实现 cron.Job 接口
 func (j *Job) Run() {
 	// As this function should comply with the Job interface of the cron package we will use
 	// the agent property on execution, this is why it need to check if it's set and otherwise fail.
@@ -242,6 +243,7 @@ func (j *Job) Run() {
 		// Simple execution wrapper
 		ex := NewExecution(j.Name)
 
+		// 触发调度运行 Job
 		if _, err := j.Agent.Run(j.Name, ex); err != nil {
 			j.logger.WithError(err).Error("job: Error running job")
 		}
@@ -301,13 +303,16 @@ func (j *Job) isRunnable(logger *logrus.Entry) bool {
 		return false
 	}
 
+	// pro 功能
 	if j.Agent.GlobalLock {
 		logger.WithField("job", j.Name).
 			Warning("job: Skipping execution because active global lock")
 		return false
 	}
 
+	// 禁止并发执行
 	if j.Concurrency == ConcurrencyForbid {
+		// 通过 GRPC 调取获取所有当前正在执行的任务, 只是调度任务的时候检查是否同时执行
 		exs, err := j.Agent.GetActiveExecutions()
 		if err != nil {
 			logger.WithError(err).Error("job: Error quering for running executions")
@@ -315,6 +320,8 @@ func (j *Job) isRunnable(logger *logrus.Entry) bool {
 		}
 
 		for _, e := range exs {
+			// 如果有正在执行的任务就跳过执行
+			// 理论上只有一个 leader 运行调度器, 控制任务不会被同时调度执行
 			if e.JobName == j.Name {
 				logger.WithFields(logrus.Fields{
 					"job":         j.Name,

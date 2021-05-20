@@ -74,6 +74,7 @@ func (h *HTTPTransport) ServeHTTP() {
 		"address": h.agent.config.HTTPAddr,
 	}).Info("api: Running HTTP server")
 
+	// 监听 http
 	go h.Engine.Run(h.agent.config.HTTPAddr)
 }
 

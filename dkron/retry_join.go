@@ -50,11 +50,17 @@ func (r *retryJoiner) retryJoin(logger *logrus.Entry) error {
 		return nil
 	}
 
+	// 使用 go-discovery 发通过不同的基础设施自动发现 IP
 	// Copy the default providers, and then add the non-default
 	providers := make(map[string]discover.Provider)
 	for k, v := range discover.Providers {
 		providers[k] = v
 	}
+
+	// 尝试 In-Cluster 方式从 "/var/run/secrets/kubernetes.io/serviceaccount"
+	//	获取 kubeconfig
+	//	ref: https://github.com/kubernetes/client-go/tree/master/examples/in-cluster-client-configuration
+	//	获取 PodIP 列表
 	providers["k8s"] = &discoverk8s.Provider{}
 
 	disco, err := discover.New(
@@ -74,6 +80,7 @@ func (r *retryJoiner) retryJoin(logger *logrus.Entry) error {
 
 		for _, addr := range r.addrs {
 			switch {
+				// 使用 go-discovery 发现 IP
 			case strings.Contains(addr, "provider="):
 				servers, err := disco.Addrs(addr, log.New(logger.Logger.Writer(), "", log.LstdFlags|log.Lshortfile))
 				if err != nil {
@@ -94,6 +101,7 @@ func (r *retryJoiner) retryJoin(logger *logrus.Entry) error {
 		}
 
 		if len(addrs) > 0 {
+			// Serf 加入集群
 			n, err := r.join(addrs)
 			if err == nil {
 				logger.Infof("agent: Join %s completed. Synced with %d initial agents", r.cluster, n)
@@ -101,6 +109,7 @@ func (r *retryJoiner) retryJoin(logger *logrus.Entry) error {
 			}
 		}
 
+		// 重试尝试获取 IP 加入集群
 		if len(addrs) == 0 {
 			err = fmt.Errorf("no servers to join")
 		}

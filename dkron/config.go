@@ -22,10 +22,12 @@ type Config struct {
 	// NodeName is the name we register as. Defaults to hostname.
 	NodeName string `mapstructure:"node-name"`
 
+	// Serf peer 通信地址
 	// BindAddr is the address on which all of dkron's services will
 	// be bound. If not specified, this defaults to the first private ip address.
 	BindAddr string `mapstructure:"bind-addr"`
 
+	// UI 地址
 	// HTTPAddr is the address on the UI web server will
 	// be bound. If not specified, this defaults to all interfaces.
 	HTTPAddr string `mapstructure:"http-addr"`
@@ -172,8 +174,8 @@ type Config struct {
 
 // DefaultBindPort is the default port that dkron will use for Serf communication
 const (
-	DefaultBindPort      int           = 8946
-	DefaultRPCPort       int           = 6868
+	DefaultBindPort      int           = 8946 // Serf 集群 peer 通信端口
+	DefaultRPCPort       int           = 6868 // client 与 Serf 集群通信端口
 	DefaultRetryInterval time.Duration = time.Second * 30
 )
 

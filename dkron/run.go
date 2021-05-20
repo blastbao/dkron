@@ -8,6 +8,7 @@ import (
 )
 
 // Run call the agents to run a job. Returns a job with it's new status and next schedule.
+// 调度运行 Job -> 分发到 agent 执行任务
 func (a *Agent) Run(jobName string, ex *Execution) (*Job, error) {
 	job, err := a.Store.GetJob(jobName, nil)
 	if err != nil {
@@ -16,8 +17,11 @@ func (a *Agent) Run(jobName string, ex *Execution) (*Job, error) {
 
 	// In case the job is not a child job, compute the next execution time
 	if job.ParentJob == "" {
+		// 获取 cron.Entry
 		if e, ok := a.sched.GetEntry(jobName); ok {
+			// 获取下一次执行时间
 			job.Next = e.Next
+			// 同步 job 数据
 			if err := a.applySetJob(job.ToProto()); err != nil {
 				return nil, fmt.Errorf("agent: Run error storing job %s before running: %w", jobName, err)
 			}
@@ -36,6 +40,7 @@ func (a *Agent) Run(jobName string, ex *Execution) (*Job, error) {
 		}
 	} else {
 		// In case of retrying, find the rpc address of the node or return with an error
+		// 重试使用同样的 Node 执行
 		var addr string
 		for _, m := range a.serf.Members() {
 			if ex.NodeName == m.Name {
@@ -76,6 +81,7 @@ func (a *Agent) Run(jobName string, ex *Execution) (*Job, error) {
 		}(v, &wg)
 	}
 
+	// 等待所有节点执行完
 	wg.Wait()
 	return job, nil
 }

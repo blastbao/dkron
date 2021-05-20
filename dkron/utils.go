@@ -56,6 +56,7 @@ func UserAgent() string {
 
 // IsServer Returns if a member is a Dkron server. Returns a boolean,
 // and a struct with the various important components
+// 判断是否是 dkron server
 func isServer(m serf.Member) (bool, *ServerParts) {
 	if m.Tags["role"] != "dkron" {
 		return false, nil

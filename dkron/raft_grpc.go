@@ -11,6 +11,7 @@ import (
 )
 
 // RaftLayer is the network layer for internode communications.
+// 实现了 raft.StreamLayer
 type RaftLayer struct {
 	TLSConfig *tls.Config
 

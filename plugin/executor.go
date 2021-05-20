@@ -44,6 +44,8 @@ type ExecutorClient struct {
 	broker *plugin.GRPCBroker
 }
 
+// ref: https://github.com/distribworks/dkron/pull/719
+// 实现执行时实时传输 output, 双向流
 func (m *ExecutorClient) Execute(args *types.ExecuteRequest, cb StatusHelper) (*types.ExecuteResponse, error) {
 	// This is where the magic conversion to Proto happens
 	statusHelperServer := &GRPCStatusHelperServer{Impl: cb}

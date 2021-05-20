@@ -21,6 +21,7 @@ const (
 // monitorLeadership is used to monitor if we acquire or lose our role
 // as the leader in the Raft cluster. There is some work the leader is
 // expected to do, so we must react to changes
+// 处理 leader 变化
 func (a *Agent) monitorLeadership() {
 	var weAreLeaderCh chan struct{}
 	var leaderLoop sync.WaitGroup
@@ -34,8 +35,8 @@ func (a *Agent) monitorLeadership() {
 					a.logger.Error("dkron: attempted to start the leader loop while running")
 					continue
 				}
-
 				weAreLeaderCh = make(chan struct{})
+
 				leaderLoop.Add(1)
 				go func(ch chan struct{}) {
 					defer leaderLoop.Done()
@@ -64,6 +65,7 @@ func (a *Agent) monitorLeadership() {
 
 // leaderLoop runs as long as we are the leader to run various
 // maintenance activities
+// 处理变成 leader 事件
 func (a *Agent) leaderLoop(stopCh chan struct{}) {
 	var reconcileCh chan serf.Member
 	establishedLeader := false
@@ -187,6 +189,7 @@ func (a *Agent) establishLeadership(stopCh chan struct{}) error {
 	if err != nil {
 		a.logger.Fatal(err)
 	}
+	// 只有 Leader 才会启动调度器
 	a.sched.Start(jobs, a)
 
 	return nil

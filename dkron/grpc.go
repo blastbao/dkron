@@ -56,9 +56,11 @@ func NewGRPCServer(agent *Agent, logger *logrus.Entry) DkronGRPCServer {
 // Serve creates and start a new gRPC dkron server
 func (grpcs *GRPCServer) Serve(lis net.Listener) error {
 	grpcServer := grpc.NewServer()
+	// 注册 dkron 接口
 	proto.RegisterDkronServer(grpcServer, grpcs)
 
 	as := NewAgentServer(grpcs.agent, grpcs.logger)
+	// 注册 agent 接口
 	proto.RegisterAgentServer(grpcServer, as)
 	go grpcServer.Serve(lis)
 
@@ -66,6 +68,7 @@ func (grpcs *GRPCServer) Serve(lis net.Listener) error {
 }
 
 // Encode is used to encode a Protoc object with type prefix
+// Proto 转换成 Bytes
 func Encode(t MessageType, msg interface{}) ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteByte(uint8(t))
@@ -150,6 +153,7 @@ func (grpcs *GRPCServer) GetJob(ctx context.Context, getJobReq *proto.GetJobRequ
 }
 
 // ExecutionDone saves the execution to the store
+// 执行完成, 进行后续处理
 func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.ExecutionDoneRequest) (*proto.ExecutionDoneResponse, error) {
 	defer metrics.MeasureSince([]string{"grpc", "execution_done"}, time.Now())
 	grpcs.logger.WithFields(logrus.Fields{
@@ -162,6 +166,7 @@ func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.E
 	// Forward the request to the leader in case current node is not the leader.
 	if !grpcs.agent.IsLeader() {
 		addr := grpcs.agent.raft.Leader()
+		// 如果我不是 leader , 将请求发给 leader 执行
 		grpcs.agent.GRPCClient.ExecutionDone(string(addr), NewExecutionFromProto(execDoneReq.Execution))
 		return nil, ErrNotLeader
 	}
@@ -173,6 +178,8 @@ func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.E
 		return nil, err
 	}
 
+	// 执行 processor, 不需要双向通信
+	// 由此推测 exector 使用 grpc 执行是需要 GRPC 双向流
 	pbex := *execDoneReq.Execution
 	for k, v := range job.Processors {
 		grpcs.logger.WithField("plugin", k).Info("grpc: Processing execution with plugin")
@@ -184,6 +191,7 @@ func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.E
 		}
 	}
 
+	// 同步集群状态
 	execDoneReq.Execution = &pbex
 	cmd, err := Encode(ExecutionDoneType, execDoneReq)
 	if err != nil {
@@ -201,6 +209,7 @@ func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.E
 		return nil, err
 	}
 
+	// 任务执行重试
 	// If the execution failed, retry it until retries limit (default: don't retry)
 	execution := NewExecutionFromProto(&pbex)
 	if !execution.Success && uint(execution.Attempt) < job.Retries+1 {
@@ -238,6 +247,7 @@ func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.E
 		return nil, err
 	}
 
+	// 执行依赖的任务
 	// Jobs that have dependent jobs are a bit more expensive because we need to call the Status() method for every execution.
 	// Check first if there's dependent jobs and then check for the job status to begin execution dependent jobs on success.
 	if len(job.DependentJobs) > 0 && job.Status == StatusSuccess {
@@ -369,6 +379,7 @@ REMOVE:
 }
 
 // GetActiveExecutions returns the active executions on the server node
+// 返回本 server 活跃的执行清单
 func (grpcs *GRPCServer) GetActiveExecutions(ctx context.Context, in *empty.Empty) (*proto.GetActiveExecutionsResponse, error) {
 	defer metrics.MeasureSince([]string{"grpc", "agent_run"}, time.Now())
 
@@ -386,6 +397,7 @@ func (grpcs *GRPCServer) GetActiveExecutions(ctx context.Context, in *empty.Empt
 
 // SetExecution broadcast a state change to the cluster members that will store the execution.
 // This only works on the leader
+// 储存任务执行状态
 func (grpcs *GRPCServer) SetExecution(ctx context.Context, execution *proto.Execution) (*empty.Empty, error) {
 	defer metrics.MeasureSince([]string{"grpc", "set_execution"}, time.Now())
 	grpcs.logger.WithFields(logrus.Fields{
@@ -397,6 +409,7 @@ func (grpcs *GRPCServer) SetExecution(ctx context.Context, execution *proto.Exec
 		grpcs.logger.WithError(err).Fatal("agent: encode error in SetExecution")
 		return nil, err
 	}
+	// 通过 raft apply 同步集群状态
 	af := grpcs.agent.raft.Apply(cmd, raftTimeout)
 	if err := af.Error(); err != nil {
 		grpcs.logger.WithError(err).Fatal("agent: error applying SetExecutionType")

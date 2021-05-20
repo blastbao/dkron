@@ -167,6 +167,7 @@ func (grpcc *GRPCClient) Leave(addr string) error {
 func (grpcc *GRPCClient) SetJob(job *Job) error {
 	var conn *grpc.ClientConn
 
+	// 让 leader 操作 job
 	addr := grpcc.agent.raft.Leader()
 
 	// Initiate a connection with the server
@@ -199,6 +200,7 @@ func (grpcc *GRPCClient) SetJob(job *Job) error {
 func (grpcc *GRPCClient) DeleteJob(jobName string) (*Job, error) {
 	var conn *grpc.ClientConn
 
+	// 让 leader 操作 job
 	addr := grpcc.agent.raft.Leader()
 
 	// Initiate a connection with the server
@@ -234,6 +236,7 @@ func (grpcc *GRPCClient) DeleteJob(jobName string) (*Job, error) {
 func (grpcc *GRPCClient) RunJob(jobName string) (*Job, error) {
 	var conn *grpc.ClientConn
 
+	// 让 leader 操作 job
 	addr := grpcc.agent.raft.Leader()
 
 	// Initiate a connection with the server
@@ -358,6 +361,7 @@ func (grpcc *GRPCClient) GetActiveExecutions(addr string) ([]*proto.Execution, e
 func (grpcc *GRPCClient) SetExecution(execution *proto.Execution) error {
 	var conn *grpc.ClientConn
 
+	// 让 leader 操作 job
 	addr := grpcc.agent.raft.Leader()
 
 	// Initiate a connection with the server
@@ -385,12 +389,14 @@ func (grpcc *GRPCClient) SetExecution(execution *proto.Execution) error {
 }
 
 // AgentRun runs a job in the given agent
+// Dkron server 调用此方法通过 GRPC 下发 Job 到 server/agent 执行
 func (grpcc *GRPCClient) AgentRun(addr string, job *proto.Job, execution *proto.Execution) error {
 	defer metrics.MeasureSince([]string{"grpc_client", "agent_run"}, time.Now())
 	var conn *grpc.ClientConn
 
 	// Initiate a connection with the server
-	conn, err := grpcc.Connect(string(addr))
+	// (MAYO): remove string type wrap
+	conn, err := grpcc.Connect(addr)
 	if err != nil {
 		grpcc.logger.WithError(err).WithFields(logrus.Fields{
 			"method":      "AgentRun",
@@ -412,10 +418,12 @@ func (grpcc *GRPCClient) AgentRun(addr string, job *proto.Job, execution *proto.
 
 	var first bool
 	for {
+		// 读取 GRPC 流
 		ars, err := stream.Recv()
 
 		// Stream ends
 		if err == io.EOF {
+			// 任务执行结束, 发送 done 命令给 leader 持久化储存
 			addr := grpcc.agent.raft.Leader()
 			if err := grpcc.ExecutionDone(string(addr), NewExecutionFromProto(execution)); err != nil {
 				return err
@@ -447,6 +455,7 @@ func (grpcc *GRPCClient) AgentRun(addr string, job *proto.Job, execution *proto.
 
 		// Store the received execution in the raft log and store
 		if !first {
+			// 储存执行状态
 			if err := grpcc.SetExecution(ars.Execution); err != nil {
 				return err
 			}
