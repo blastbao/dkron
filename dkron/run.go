@@ -12,9 +12,9 @@ import (
 // [重要]
 // 调度运行 Job -> 分发到 agent 执行任务
 //
-// - 从 store 获取任务详情
 // - 计算下一次执行时间，然后更新任务到 store
 func (a *Agent) Run(jobName string, ex *Execution) (*Job, error) {
+	// 1. 从 store 获取任务详情
 	job, err := a.Store.GetJob(jobName, nil)
 	if err != nil {
 		return nil, fmt.Errorf("agent: Run error retrieving job: %s from store: %w", jobName, err)
@@ -72,22 +72,14 @@ func (a *Agent) Run(jobName string, ex *Execution) (*Job, error) {
 		wg.Add(1)
 		go func(node string, wg *sync.WaitGroup) {
 			defer wg.Done()
-			a.logger.WithFields(map[string]interface{}{
-				"job_name": job.Name,
-				"node":     node,
-			}).Info("agent: Calling AgentRun")
-
-			err := a.GRPCClient.AgentRun(node, job.ToProto(), ex.ToProto())
-			if err != nil {
-				a.logger.WithFields(map[string]interface{}{
-					"job_name": job.Name,
-					"node":     node,
-				}).Error("agent: Error calling AgentRun")
+			a.logger.WithFields(map[string]interface{}{"job_name": job.Name, "node": node}).Info("agent: Calling AgentRun")
+			if err := a.GRPCClient.AgentRun(node, job.ToProto(), ex.ToProto()); err != nil {
+				a.logger.WithFields(map[string]interface{}{"job_name": job.Name, "node": node}).Error("agent: Error calling AgentRun")
 			}
 		}(v, &wg)
 	}
-
 	// 等待所有节点执行完
 	wg.Wait()
+
 	return job, nil
 }

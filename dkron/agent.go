@@ -893,7 +893,7 @@ func (a *Agent) applySetJob(job *proto.Job) error {
 	if err != nil {
 		return err
 	}
-	// 返回 raft apply future
+	// 提交到 raft cluster ，注意，只有 leader 才能调用 apply()
 	af := a.raft.Apply(cmd, raftTimeout)
 	if err := af.Error(); err != nil {
 		return err

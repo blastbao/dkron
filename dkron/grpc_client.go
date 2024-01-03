@@ -14,8 +14,7 @@ import (
 	"google.golang.org/grpc"
 )
 
-// DkronGRPCClient defines the interface that any gRPC client for
-// dkron should implement.
+// DkronGRPCClient defines the interface that any gRPC client for dkron should implement.
 type DkronGRPCClient interface {
 	Connect(string) (*grpc.ClientConn, error)
 	ExecutionDone(string, *Execution) error

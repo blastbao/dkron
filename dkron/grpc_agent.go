@@ -32,14 +32,14 @@ func (s *statusAgentHelper) Update(b []byte, c bool) (int64, error) {
 	return 0, nil
 }
 
-// GRPCAgentServer is the local implementation of the gRPC server interface.
+// AgentServer is the local implementation of the gRPC server interface.
 type AgentServer struct {
 	types.AgentServer
 	agent  *Agent
 	logger *logrus.Entry
 }
 
-// NewServer creates and returns an instance of a DkronGRPCServer implementation
+// NewAgentServer creates and returns an instance of a DkronGRPCServer implementation
 func NewAgentServer(agent *Agent, logger *logrus.Entry) types.AgentServer {
 	return &AgentServer{
 		agent:  agent,

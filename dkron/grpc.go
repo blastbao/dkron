@@ -89,10 +89,12 @@ func (grpcs *GRPCServer) SetJob(ctx context.Context, setJobReq *proto.SetJobRequ
 		"job": setJobReq.Job.Name,
 	}).Debug("grpc: Received SetJob")
 
+	// 1. 提交到 raft cluster ，具体 raft 执行逻辑，详见 `SetJobType` 相关流程（主要是存储到 store 中）。
 	if err := grpcs.agent.applySetJob(setJobReq.Job); err != nil {
 		return nil, err
 	}
 
+	// 2. 注册 cron 任务
 	// If everything is ok, add the job to the scheduler
 	job := NewJobFromProto(setJobReq.Job)
 	job.Agent = grpcs.agent
@@ -100,6 +102,7 @@ func (grpcs *GRPCServer) SetJob(ctx context.Context, setJobReq *proto.SetJobRequ
 		return nil, err
 	}
 
+	// 3. 返回成功
 	return &proto.SetJobResponse{}, nil
 }
 
@@ -109,14 +112,19 @@ func (grpcs *GRPCServer) DeleteJob(ctx context.Context, delJobReq *proto.DeleteJ
 	defer metrics.MeasureSince([]string{"grpc", "delete_job"}, time.Now())
 	grpcs.logger.WithField("job", delJobReq.GetJobName()).Debug("grpc: Received DeleteJob")
 
+	// 1. 构造 raft cmd
 	cmd, err := Encode(DeleteJobType, delJobReq)
 	if err != nil {
 		return nil, err
 	}
+
+	// 2. 提交到 raft cluster ，只有 leader 才能调用 apply()
 	af := grpcs.agent.raft.Apply(cmd, raftTimeout)
 	if err := af.Error(); err != nil {
 		return nil, err
 	}
+
+	// 3. 解析响应
 	res := af.Response()
 	job, ok := res.(*Job)
 	if !ok {
@@ -124,9 +132,12 @@ func (grpcs *GRPCServer) DeleteJob(ctx context.Context, delJobReq *proto.DeleteJ
 	}
 	jpb := job.ToProto()
 
+	// 4. 从 cron 中移除
+	// [待确认] cron 是每次选举出 leader 时重新加载的吗？
+	// [待确认] 向 cron 中增加、移除任务是实时同步到 store 的吗？怎么保证集群中一致？
+	// [待确认] 初步看在 leader.go 中能找到答案。
 	// If everything is ok, remove the job
 	grpcs.agent.sched.RemoveJob(job)
-
 	return &proto.DeleteJobResponse{Job: jpb}, nil
 }
 
@@ -135,11 +146,13 @@ func (grpcs *GRPCServer) GetJob(ctx context.Context, getJobReq *proto.GetJobRequ
 	defer metrics.MeasureSince([]string{"grpc", "get_job"}, time.Now())
 	grpcs.logger.WithField("job", getJobReq.JobName).Debug("grpc: Received GetJob")
 
+	// 1. 直接从本地 store 中查询 job ，raft 保证集群中每个节点的存储都是强一致的
 	j, err := grpcs.agent.Store.GetJob(getJobReq.JobName, nil)
 	if err != nil {
 		return nil, err
 	}
 
+	// 2. 构造响应
 	gjr := &proto.GetJobResponse{
 		Job: &proto.Job{},
 	}
@@ -164,22 +177,24 @@ func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.E
 
 	// Get the leader address and compare with the current node address.
 	// Forward the request to the leader in case current node is not the leader.
+	// 如果当前节点不是领导者，则将请求转发给领导者。
 	if !grpcs.agent.IsLeader() {
 		addr := grpcs.agent.raft.Leader()
-		// 如果我不是 leader , 将请求发给 leader 执行
 		grpcs.agent.GRPCClient.ExecutionDone(string(addr), NewExecutionFromProto(execDoneReq.Execution))
 		return nil, ErrNotLeader
 	}
+	// 当前节点是 leader 。
 
 	// This is the leader at this point, so process the execution, encode the value and apply the log to the cluster.
 	// Get the defined output types for the job, and call them
+	// 1. 获取 job 信息
 	job, err := grpcs.agent.Store.GetJob(execDoneReq.Execution.JobName, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// 执行 processor, 不需要双向通信
-	// 由此推测 exector 使用 grpc 执行是需要 GRPC 双向流
+	// 2. 遍历所有的 job 处理器，对请求进行处理，处理器是通过插件实现的。
+	// 如果处理器存在，则调用处理器对请求进行处理，否则记录错误日志。
 	pbex := *execDoneReq.Execution
 	for k, v := range job.Processors {
 		grpcs.logger.WithField("plugin", k).Info("grpc: Processing execution with plugin")
@@ -191,7 +206,7 @@ func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.E
 		}
 	}
 
-	// 同步集群状态
+	// 3. 将执行结果提交到 raft cluster
 	execDoneReq.Execution = &pbex
 	cmd, err := Encode(ExecutionDoneType, execDoneReq)
 	if err != nil {
@@ -202,6 +217,7 @@ func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.E
 		return nil, err
 	}
 
+	// 4. 获取最新 job 信息
 	// Retrieve the fresh, updated job from the store to work on stored values
 	job, err = grpcs.agent.Store.GetJob(job.Name, nil)
 	if err != nil {
@@ -209,7 +225,7 @@ func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.E
 		return nil, err
 	}
 
-	// 任务执行重试
+	// 5. 检查执行是否失败，如果执行失败且重试次数小于 Job 最大重试次数，则重试。
 	// If the execution failed, retry it until retries limit (default: don't retry)
 	execution := NewExecutionFromProto(&pbex)
 	if !execution.Success && uint(execution.Attempt) < job.Retries+1 {
@@ -226,6 +242,7 @@ func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.E
 		if _, err := grpcs.agent.Run(job.Name, execution); err != nil {
 			return nil, err
 		}
+
 		return &proto.ExecutionDoneResponse{
 			From:    grpcs.agent.config.NodeName,
 			Payload: []byte("retry"),
@@ -281,7 +298,6 @@ func (grpcs *GRPCServer) RunJob(ctx context.Context, req *proto.RunJobRequest) (
 		return nil, err
 	}
 	jpb := job.ToProto()
-
 	return &proto.RunJobResponse{Job: jpb}, nil
 }
 
@@ -404,11 +420,13 @@ func (grpcs *GRPCServer) SetExecution(ctx context.Context, execution *proto.Exec
 		"execution": execution.Key(),
 	}).Debug("grpc: Received SetExecution")
 
+	// 构造 Raft Msg := MsgType(1B) + MsgData
 	cmd, err := Encode(SetExecutionType, execution)
 	if err != nil {
 		grpcs.logger.WithError(err).Fatal("agent: encode error in SetExecution")
 		return nil, err
 	}
+
 	// 通过 raft apply 同步集群状态
 	af := grpcs.agent.raft.Apply(cmd, raftTimeout)
 	if err := af.Error(); err != nil {
