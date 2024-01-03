@@ -67,17 +67,17 @@ type kv struct {
 // 创建基于内存的 buntdb
 func NewStore(logger *logrus.Entry) (*Store, error) {
 	db, err := buntdb.Open(":memory:")
-	db.CreateIndex("name", jobsPrefix+":*", buntdb.IndexJSON("name"))
-	db.CreateIndex("started_at", executionsPrefix+":*", buntdb.IndexJSON("started_at"))
-	db.CreateIndex("finished_at", executionsPrefix+":*", buntdb.IndexJSON("finished_at"))
-	db.CreateIndex("attempt", executionsPrefix+":*", buntdb.IndexJSON("attempt"))
-	db.CreateIndex("displayname", jobsPrefix+":*", buntdb.IndexJSON("displayname"))
-	db.CreateIndex("schedule", jobsPrefix+":*", buntdb.IndexJSON("schedule"))
-	db.CreateIndex("success_count", jobsPrefix+":*", buntdb.IndexJSON("success_count"))
-	db.CreateIndex("error_count", jobsPrefix+":*", buntdb.IndexJSON("error_count"))
-	db.CreateIndex("last_success", jobsPrefix+":*", buntdb.IndexJSON("last_success"))
-	db.CreateIndex("last_error", jobsPrefix+":*", buntdb.IndexJSON("last_error"))
-	db.CreateIndex("next", jobsPrefix+":*", buntdb.IndexJSON("next"))
+	db.CreateIndex("name", jobsPrefix+":*", buntdb.IndexJSON("name"))                     // 任务名
+	db.CreateIndex("started_at", executionsPrefix+":*", buntdb.IndexJSON("started_at"))   // 开始时间
+	db.CreateIndex("finished_at", executionsPrefix+":*", buntdb.IndexJSON("finished_at")) // 结束时间
+	db.CreateIndex("attempt", executionsPrefix+":*", buntdb.IndexJSON("attempt"))         // 尝试次数
+	db.CreateIndex("displayname", jobsPrefix+":*", buntdb.IndexJSON("displayname"))       // 任务名
+	db.CreateIndex("schedule", jobsPrefix+":*", buntdb.IndexJSON("schedule"))             // 调度
+	db.CreateIndex("success_count", jobsPrefix+":*", buntdb.IndexJSON("success_count"))   // 成功数
+	db.CreateIndex("error_count", jobsPrefix+":*", buntdb.IndexJSON("error_count"))       // 错误数
+	db.CreateIndex("last_success", jobsPrefix+":*", buntdb.IndexJSON("last_success"))     // 上次成功
+	db.CreateIndex("last_error", jobsPrefix+":*", buntdb.IndexJSON("last_error"))         // 上次失败
+	db.CreateIndex("next", jobsPrefix+":*", buntdb.IndexJSON("next"))                     // 下次执行
 	if err != nil {
 		return nil, err
 	}
@@ -137,17 +137,17 @@ func (s *Store) SetJob(job *Job, copyDependentJobs bool) error {
 	}
 
 	err := s.db.Update(func(tx *buntdb.Tx) error {
-		// 如果已经储存则填充 pbej
 		// Get if the requested job already exist
+		// 根据 job name 读取 store ，拿到 *proto.Job 数据后反序列化到 &pbej 上
 		err := s.getJobTxFunc(job.Name, &pbej)(tx)
 		if err != nil && err != buntdb.ErrNotFound {
 			return err
 		}
 
-		// 获取已存在的 job
+		// 把 *proto.Job 转换为 *Job 对象
 		ej = NewJobFromProto(&pbej)
 
-		// 不存在的话 name 为空字符串
+		// 不存在的话 name 为空字符串，否则将 ej 中一些参数填入 job 中
 		if ej.Name != "" {
 			// 填充 job 运行时 metadata
 			// When the job runs, these status vars are updated
@@ -184,7 +184,9 @@ func (s *Store) SetJob(job *Job, copyDependentJobs bool) error {
 			}
 		}
 
+		// 把 *Job 转换为 *proto.Job 对象
 		pbj := job.ToProto()
+		// 将 *proto.Job 对象序列化后存储到 store 中，key = "jobs:{job}"
 		s.setJobTxFunc(pbj)(tx)
 		return nil
 	})
@@ -193,6 +195,7 @@ func (s *Store) SetJob(job *Job, copyDependentJobs bool) error {
 	}
 
 	// If the parent job changed update the parents of the old (if any) and new jobs
+	// 如果父作业发生了变化，请更新旧作业（如果有的话）和新作业的父作业。
 	if job.ParentJob != ej.ParentJob {
 		if err := s.removeFromParent(ej); err != nil {
 			return err
@@ -258,7 +261,9 @@ func (s *Store) addToParent(child *Job) error {
 // results
 func (s *Store) SetExecutionDone(execution *Execution) (bool, error) {
 	err := s.db.Update(func(tx *buntdb.Tx) error {
+
 		// Load the job from the store
+		// 从 store 中查找 job
 		var pbj dkronpb.Job
 		if err := s.getJobTxFunc(execution.JobName, &pbj)(tx); err != nil {
 			if err == buntdb.ErrNotFound {
@@ -269,14 +274,17 @@ func (s *Store) SetExecutionDone(execution *Execution) (bool, error) {
 			return err
 		}
 
+		// 任务每次执行有唯一的 execution id
 		key := fmt.Sprintf("%s:%s:%s", executionsPrefix, execution.JobName, execution.Key())
 
 		// Save the execution to store
+		// 保存到 store
 		pbe := execution.ToProto()
 		if err := s.setExecutionTxFunc(key, pbe)(tx); err != nil {
 			return err
 		}
 
+		// 更新任务的执行成功数/成功时间、失败数/失败时间、...
 		if pbe.Success {
 			pbj.LastSuccess.HasValue = true
 			pbj.LastSuccess.Time = pbe.FinishedAt
@@ -287,6 +295,7 @@ func (s *Store) SetExecutionDone(execution *Execution) (bool, error) {
 			pbj.ErrorCount++
 		}
 
+		//
 		status, err := s.computeStatus(pbj.Name, pbe.Group, tx)
 		if err != nil {
 			return err
@@ -323,6 +332,8 @@ func (s *Store) jobHasMetadata(job *Job, metadata map[string]string) bool {
 
 // GetJobs returns all jobs
 func (s *Store) GetJobs(options *JobOptions) ([]*Job, error) {
+
+	// 默认按照 name 排序
 	if options == nil {
 		options = &JobOptions{
 			Sort: "name",
@@ -331,6 +342,7 @@ func (s *Store) GetJobs(options *JobOptions) ([]*Job, error) {
 
 	jobs := make([]*Job, 0)
 	jobsFn := func(key, item string) bool {
+		// 反序列化当前 job
 		var pbj dkronpb.Job
 		// [TODO] This condition is temporary while we migrate to JSON marshalling for jobs
 		// so we can use BuntDb indexes. To be removed in future versions.
@@ -347,7 +359,6 @@ func (s *Store) GetJobs(options *JobOptions) ([]*Job, error) {
 				(options.Query == "" || strings.Contains(job.Name, options.Query) || strings.Contains(job.DisplayName, options.Query)) &&
 				(options.Disabled == "" || strconv.FormatBool(job.Disabled) == options.Disabled) &&
 				((options.Status == "untriggered" && job.Status == "") || (options.Status == "" || job.Status == options.Status)) {
-
 			jobs = append(jobs, job)
 		}
 		return true
@@ -390,7 +401,6 @@ func (s *Store) getJobTxFunc(name string, pbj *dkronpb.Job) func(tx *buntdb.Tx) 
 		if err != nil {
 			return err
 		}
-
 		// [TODO] This condition is temporary while we migrate to JSON marshalling for jobs
 		// so we can use BuntDb indexes. To be removed in future versions.
 		if err := proto.Unmarshal([]byte(item), pbj); err != nil {
@@ -398,11 +408,9 @@ func (s *Store) getJobTxFunc(name string, pbj *dkronpb.Job) func(tx *buntdb.Tx) 
 				return err
 			}
 		}
-
 		s.logger.WithFields(logrus.Fields{
 			"job": pbj.Name,
 		}).Debug("store: Retrieved job from datastore")
-
 		return nil
 	}
 }
@@ -540,6 +548,7 @@ func (*Store) setExecutionTxFunc(key string, pbe *dkronpb.Execution) func(tx *bu
 		}
 		// Do nothing if a previous execution exists and is
 		// more recent, avoiding non ordered execution set
+		// 已经存在？
 		if i != "" {
 			var p dkronpb.Execution
 			// [TODO] This condition is temporary while we migrate to JSON marshalling for executions
@@ -555,11 +564,13 @@ func (*Store) setExecutionTxFunc(key string, pbe *dkronpb.Execution) func(tx *bu
 			}
 		}
 
+		// 序列化
 		eb, err := json.Marshal(pbe)
 		if err != nil {
 			return err
 		}
 
+		// 保存
 		_, _, err = tx.Set(key, string(eb), nil)
 		return err
 	}

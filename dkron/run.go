@@ -8,7 +8,12 @@ import (
 )
 
 // Run call the agents to run a job. Returns a job with it's new status and next schedule.
+//
+// [重要]
 // 调度运行 Job -> 分发到 agent 执行任务
+//
+// - 从 store 获取任务详情
+// - 计算下一次执行时间，然后更新任务到 store
 func (a *Agent) Run(jobName string, ex *Execution) (*Job, error) {
 	job, err := a.Store.GetJob(jobName, nil)
 	if err != nil {
@@ -21,7 +26,7 @@ func (a *Agent) Run(jobName string, ex *Execution) (*Job, error) {
 		if e, ok := a.sched.GetEntry(jobName); ok {
 			// 获取下一次执行时间
 			job.Next = e.Next
-			// 同步 job 数据
+			// 同步 job 数据到 raft store
 			if err := a.applySetJob(job.ToProto()); err != nil {
 				return nil, fmt.Errorf("agent: Run error storing job %s before running: %w", jobName, err)
 			}
@@ -32,6 +37,7 @@ func (a *Agent) Run(jobName string, ex *Execution) (*Job, error) {
 
 	// In the first execution attempt we build and filter the target nodes
 	// but we use the existing node target in case of retry.
+	// 在第一次执行尝试时，我们会构建并过滤目标节点，但是在重试的情况下，会使用现有的节点目标。
 	var filterMap map[string]string
 	if ex.Attempt <= 1 {
 		filterMap, _, err = a.processFilteredNodes(job)

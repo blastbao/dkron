@@ -10,6 +10,7 @@ import (
 const (
 	// StatusReap is used to update the status of a node if we
 	// are handling a EventMemberReap
+	// StatusReap 用于在处理 EventMemberReap 时更新节点的状态
 	StatusReap = serf.MemberStatus(-1)
 )
 
@@ -65,6 +66,7 @@ func (a *Agent) maybeBootstrap() {
 	// Bootstrap can only be done if there are no committed logs, remove our
 	// expectations of bootstrapping. This is slightly cheaper than the full
 	// check that BootstrapCluster will do, so this is a good pre-filter.
+	// 如果没有已提交的日志，才能进行 Bootstrap 。
 	var index uint64
 	var err error
 	if a.raftStore != nil {
@@ -93,10 +95,11 @@ func (a *Agent) maybeBootstrap() {
 	voters := 0
 	for _, member := range members {
 		valid, p := isServer(member)
+		// 跳过非 dkron server 的 member
 		if !valid {
-			// 跳过非 dkron server 的 member
 			continue
 		}
+		// 检查 region
 		if p.Region != a.config.Region {
 			continue
 		}
@@ -138,8 +141,7 @@ func (a *Agent) maybeBootstrap() {
 		}
 		configuration.Servers = append(configuration.Servers, peer)
 	}
-	a.logger.Info("agent: found expected number of peers, attempting to bootstrap cluster...",
-		"peers", strings.Join(addrs, ","))
+	a.logger.Info("agent: found expected number of peers, attempting to bootstrap cluster...", "peers", strings.Join(addrs, ","))
 	// raft 集群初始化
 	future := a.raft.BootstrapCluster(configuration)
 	if err := future.Error(); err != nil {

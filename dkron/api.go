@@ -168,13 +168,18 @@ func (h *HTTPTransport) indexHandler(c *gin.Context) {
 
 func (h *HTTPTransport) jobsHandler(c *gin.Context) {
 	metadata := c.QueryMap("metadata")
+
+	// 默认按照 id/name 排序
 	sort := c.DefaultQuery("_sort", "id")
 	if sort == "id" {
 		sort = "name"
 	}
-	order := c.DefaultQuery("_order", "ASC")
-	q := c.Query("q")
 
+	// 默认按照 ASC 升序排序
+	order := c.DefaultQuery("_order", "ASC")
+
+	//
+	q := c.Query("q")
 	jobs, err := h.agent.Store.GetJobs(
 		&JobOptions{
 			Metadata: metadata,
@@ -380,6 +385,7 @@ func (h *HTTPTransport) membersHandler(c *gin.Context) {
 }
 
 func (h *HTTPTransport) leaderHandler(c *gin.Context) {
+	// 获取 leader
 	member, err := h.agent.leaderMember()
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)

@@ -289,8 +289,7 @@ func (a *Agent) setupRaft() error {
 		logger = a.logger.Logger.Writer()
 	}
 
-	// 创建 raft transport
-	// （Raft 节点间的通信通道），节点之间需要通过这个通道来进行日志同步、领导者选举等等
+	// 创建 raft transport（Raft 节点间的通信通道），节点之间需要通过这个通道来进行日志同步、领导者选举等等
 	// 方法内部启动协程 listen listener
 	transport := raft.NewNetworkTransport(a.raftLayer, 3, raftTimeout, logger)
 	a.raftTransport = transport
@@ -306,12 +305,10 @@ func (a *Agent) setupRaft() error {
 	config.HeartbeatTimeout = config.HeartbeatTimeout * time.Duration(raftMultiplier)
 	config.ElectionTimeout = config.ElectionTimeout * time.Duration(raftMultiplier)
 	config.LeaderLeaseTimeout = config.LeaderLeaseTimeout * time.Duration(a.config.RaftMultiplier)
-
 	config.LogOutput = logger
 	config.LocalID = raft.ServerID(a.config.NodeName)
 
-	// Build an all in-memory setup for dev mode, otherwise prepare a full
-	// disk-based setup.
+	// Build an all in-memory setup for dev mode, otherwise prepare a full disk-based setup.
 	var logStore raft.LogStore
 	var stableStore raft.StableStore
 	var snapshots raft.SnapshotStore
@@ -323,26 +320,27 @@ func (a *Agent) setupRaft() error {
 		snapshots = raft.NewDiscardSnapshotStore()
 	} else {
 		var err error
-
-		// （快照存储，用来存储节点的快照信息），也就是压缩后的日志数据
 		// Create the snapshot store. This allows the Raft to truncate the log to
 		// mitigate the issue of having an unbounded replicated log.
+		// 存储节点快照
 		snapshots, err = raft.NewFileSnapshotStore(filepath.Join(a.config.DataDir, "raft"), 3, logger)
 		if err != nil {
 			return fmt.Errorf("file snapshot store: %s", err)
 		}
 
 		// Create the BoltDB backend
+		// 存储底层数据
 		s, err := raftboltdb.NewBoltStore(filepath.Join(a.config.DataDir, "raft", "raft.db"))
 		if err != nil {
 			return fmt.Errorf("error creating new raft store: %s", err)
 		}
 		a.raftStore = s
+
 		// （稳定存储，用来存储 Raft 集群的节点信息等），比如，当前任期编号、最新投票时的任期编号等
 		stableStore = s
 
-		// 512 size 内存缓存
 		// Wrap the store in a LogCache to improve performance
+		// 512 size 内存缓存
 		cacheStore, err := raft.NewLogCache(raftLogCacheSize, s)
 		if err != nil {
 			s.Close()
@@ -366,8 +364,7 @@ func (a *Agent) setupRaft() error {
 				a.logger.WithError(err).Fatal("dkron: Error initializing store")
 			}
 			tmpFsm := newFSM(store, nil, a.logger)
-			if err := raft.RecoverCluster(config, tmpFsm,
-				logStore, stableStore, snapshots, transport, configuration); err != nil {
+			if err := raft.RecoverCluster(config, tmpFsm, logStore, stableStore, snapshots, transport, configuration); err != nil {
 				return fmt.Errorf("recovery failed: %v", err)
 			}
 			if err := os.Remove(peersFile); err != nil {
@@ -377,9 +374,8 @@ func (a *Agent) setupRaft() error {
 		}
 	}
 
+	// If we are in bootstrap or dev mode and the state is clean then we can bootstrap now.
 	// 一般我们使用 bootstrap-expect, 这里忽略
-	// If we are in bootstrap or dev mode and the state is clean then we can
-	// bootstrap now.
 	if a.config.Bootstrap || a.config.DevMode {
 		hasState, err := raft.HasExistingState(logStore, stableStore, snapshots)
 		if err != nil {
@@ -402,7 +398,7 @@ func (a *Agent) setupRaft() error {
 
 	// Instantiate the Raft systems. The second parameter is a finite state machine
 	// which stores the actual kv pairs and is operated upon through Apply().
-	//	参数: 实现了 Storage 的 DB, 默认 nil, logger 
+	//	参数: 实现了 Storage 的 DB, 默认 nil, logger
 	// 创建实现 raft FSM 接口
 	// raft 只是定义了一个接口，最终交给应用层实现。应用层收到 Log 后按 业务需求 还原为 应用数据保存起来
 	//	Raft 启动时 便 Raft.runFSM 起一个goroutine 从 fsmMutateCh channel 消费log ==> FSM.Apply
@@ -467,7 +463,7 @@ func (a *Agent) setupSerf() (*serf.Serf, error) {
 		serfConfig.Tags["expect"] = fmt.Sprintf("%d", a.config.BootstrapExpect)
 	}
 
-	// gossip 
+	// gossip
 	switch config.Profile {
 	case "lan":
 		serfConfig.MemberlistConfig = memberlist.DefaultLANConfig()
@@ -627,8 +623,11 @@ func (a *Agent) StartServer() {
 }
 
 // Utility method to get leader nodename
+// 获取 raft leader 节点信息
 func (a *Agent) leaderMember() (*serf.Member, error) {
+	// 获取 raft 集群 leader
 	l := a.raft.Leader()
+	// 查找 serf 集群中 leader 对应 member
 	for _, member := range a.serf.Members() {
 		if member.Tags["rpc_addr"] == string(l) {
 			return &member, nil
@@ -638,6 +637,7 @@ func (a *Agent) leaderMember() (*serf.Member, error) {
 }
 
 // IsLeader checks if this server is the cluster leader
+// 检查当前节点是否为 raft leader
 func (a *Agent) IsLeader() bool {
 	return a.raft.State() == raft.Leader
 }
@@ -670,13 +670,15 @@ func (a *Agent) Servers() (members []*ServerParts) {
 }
 
 // LocalServers returns a list of the local known server
-// 返回正常运行的 dkron server 列表
+// 返回正常运行的 server 列表
 func (a *Agent) LocalServers() (members []*ServerParts) {
 	for _, member := range a.serf.Members() {
 		ok, parts := isServer(member)
+		// 只取 active 的 nodes
 		if !ok || member.Status != serf.StatusAlive {
 			continue
 		}
+		// 只取同一个 region 的 nodes
 		if a.config.Region == parts.Region {
 			members = append(members, parts)
 		}
@@ -692,7 +694,7 @@ func (a *Agent) eventLoop() {
 	a.logger.Info("agent: Listen for events")
 	for {
 		select {
-			// Serf event 事件处理
+		// Serf event 事件处理
 		case e := <-a.eventCh:
 			// 有三种事件 MemberEvent/UserEvent/Query
 			// 这里只处理 MemberEvent, 只使用 Serf 做集群 member 的管理
@@ -719,14 +721,19 @@ func (a *Agent) eventLoop() {
 				// serfEventHandler is used to handle events from the serf cluster
 				switch e.EventType() {
 				case serf.EventMemberJoin:
+					// 把新增 nodeX 保存到 a.peers[`region`]=>[node1, node2, ..., nodeN] 中。
 					a.nodeJoin(me)
+					// 触发 a.raft.AddVoter()
 					a.localMemberEvent(me)
 				case serf.EventMemberLeave, serf.EventMemberFailed:
+					// 从 a.peers[`region`]=>[node1, node2, ..., nodeN] 中移除 nodeX 。
 					a.nodeFailed(me)
+					// 触发 a.raft.RemoveServer()
 					a.localMemberEvent(me)
 				case serf.EventMemberReap:
 					a.localMemberEvent(me)
-				case serf.EventMemberUpdate, serf.EventUser, serf.EventQuery: // Ignore
+				case serf.EventMemberUpdate, serf.EventUser, serf.EventQuery:
+					// Ignore
 				default:
 					a.logger.WithField("event", e.String()).Warn("agent: Unhandled serf event")
 				}
@@ -754,6 +761,7 @@ func (a *Agent) join(addrs []string, replay bool) (n int, err error) {
 
 func (a *Agent) processFilteredNodes(job *Job) (map[string]string, map[string]string, error) {
 	// The final set of nodes will be the intersection of all groups
+	// 最终的节点集将是所有组的交集
 	tags := make(map[string]string)
 
 	// Actually copy the map
@@ -763,9 +771,11 @@ func (a *Agent) processFilteredNodes(job *Job) (map[string]string, map[string]st
 
 	// Always filter by region tag as we currently only target nodes
 	// on the same region.
+	// 始终对 region 标签进行筛选，因为目前我们只关注位于同一区域的节点。
 	tags["region"] = a.config.Region
 
 	// Make a set of all members
+	// 取出 serf 集群中所有节点
 	execNodes := make(map[string]serf.Member)
 	for _, member := range a.serf.Members() {
 		if member.Status == serf.StatusAlive {
@@ -773,14 +783,14 @@ func (a *Agent) processFilteredNodes(job *Job) (map[string]string, map[string]st
 		}
 	}
 
-	// 筛选匹配 tags 的 nodes
-	// cardinality 为节点数量
+	// 筛选出与标签 tags 匹配的执行节点 nodes ，cardinality 为节点数量
 	execNodes, tags, cardinality, err := filterNodes(execNodes, tags)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	// Create an array of node names to aid in computing resulting set based on cardinality
+	// 创建一个节点名数组
 	var names []string
 	for name := range execNodes {
 		names = append(names, name)
@@ -812,11 +822,13 @@ func (a *Agent) processFilteredNodes(job *Job) (map[string]string, map[string]st
 // filterNodes determines which of the execNodes have the given tags
 // Out param! The incoming execNodes map is modified.
 // Returns:
-// * the (modified) map of execNodes
-// * a map of tag values without cardinality
-// * cardinality, i.e. the max number of nodes that should be targeted, regardless of the
-//   number of nodes in the resulting map.
-// * an error if a cardinality was malformed
+//   - the (modified) map of execNodes
+//   - a map of tag values without cardinality
+//   - cardinality, i.e. the max number of nodes that should be targeted, regardless of the
+//     number of nodes in the resulting map.
+//   - an error if a cardinality was malformed
+//
+// 筛选出与指定标签匹配的执行节点。
 func filterNodes(execNodes map[string]serf.Member, tags map[string]string) (map[string]serf.Member, map[string]string, int, error) {
 	cardinality := int(^uint(0) >> 1) // MaxInt
 
@@ -873,6 +885,7 @@ func (a *Agent) bindRPCAddr() string {
 
 // applySetJob is a helper method to be called when
 // a job property need to be modified from the leader.
+//
 // Header 发起设置 Job -> Raft Log Apply
 func (a *Agent) applySetJob(job *proto.Job) error {
 	// encode bytes
@@ -916,7 +929,9 @@ func (a *Agent) GetRunningJobs() int {
 func (a *Agent) GetActiveExecutions() ([]*proto.Execution, error) {
 	var executions []*proto.Execution
 
+	// 遍历 serf 集群中每个节点
 	for _, s := range a.LocalServers() {
+		// 通过 rpc 获取正在执行的任务列表
 		exs, err := a.GRPCClient.GetActiveExecutions(s.RPCAddr.String())
 		if err != nil {
 			return nil, err

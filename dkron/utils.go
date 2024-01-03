@@ -22,18 +22,18 @@ func (a int64arr) Less(i, j int) bool { return a[i] < a[j] }
 
 // ServerParts is used to return the parts of a server role
 type ServerParts struct {
-	Name         string
-	ID           string
-	Region       string
-	Datacenter   string
-	Port         int
-	Bootstrap    bool
-	Expect       int
-	RaftVersion  int
-	BuildVersion *version.Version
-	Addr         net.Addr
-	RPCAddr      net.Addr
-	Status       serf.MemberStatus
+	Name         string            // 节点名
+	ID           string            // 节点 ID
+	Region       string            // 区域
+	Datacenter   string            // 机房
+	Port         int               // 端口
+	Bootstrap    bool              //
+	Expect       int               //
+	RaftVersion  int               // 版本号
+	BuildVersion *version.Version  // 版本号
+	Addr         net.Addr          // 广播地址
+	RPCAddr      net.Addr          // 监听地址
+	Status       serf.MemberStatus // 状态
 }
 
 // String returns a representation of this instance
@@ -58,14 +58,17 @@ func UserAgent() string {
 // and a struct with the various important components
 // 判断是否是 dkron server
 func isServer(m serf.Member) (bool, *ServerParts) {
+	// 角色
 	if m.Tags["role"] != "dkron" {
 		return false, nil
 	}
 
+	// 服务器 or 代理
 	if m.Tags["server"] != "true" {
 		return false, nil
 	}
 
+	// 节点名(ID)、区域、机房
 	id := m.Name
 	region := m.Tags["region"]
 	datacenter := m.Tags["dc"]
@@ -86,17 +89,20 @@ func isServer(m serf.Member) (bool, *ServerParts) {
 	}
 
 	// If the server is missing the rpc_addr tag, default to the serf advertise addr
+	// 监听地址，若不存在则默认广播地址
 	rpcIP := net.ParseIP(m.Tags["rpc_addr"])
 	if rpcIP == nil {
 		rpcIP = m.Addr
 	}
 
+	// 监听端口
 	portStr := m.Tags["port"]
 	port, err := strconv.Atoi(portStr)
 	if err != nil {
 		return false, nil
 	}
 
+	// 版本号
 	buildVersion, err := version.NewVersion(m.Tags["version"])
 	if err != nil {
 		buildVersion = &version.Version{}

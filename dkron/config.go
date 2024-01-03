@@ -20,16 +20,20 @@ import (
 // Config stores all configuration options for the dkron package.
 type Config struct {
 	// NodeName is the name we register as. Defaults to hostname.
+	//
+	// 节点名，默认主机名
 	NodeName string `mapstructure:"node-name"`
 
-	// Serf peer 通信地址
 	// BindAddr is the address on which all of dkron's services will
 	// be bound. If not specified, this defaults to the first private ip address.
+	//
+	// Serf peer 通信地址
 	BindAddr string `mapstructure:"bind-addr"`
 
-	// UI 地址
 	// HTTPAddr is the address on the UI web server will
 	// be bound. If not specified, this defaults to all interfaces.
+	//
+	// UI 地址
 	HTTPAddr string `mapstructure:"http-addr"`
 
 	// Profile is used to select a timing profile for Serf. The supported choices

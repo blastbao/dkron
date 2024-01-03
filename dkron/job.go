@@ -223,6 +223,8 @@ func (j *Job) ToProto() *proto.Job {
 }
 
 // Run the job
+//
+// [重要]
 // job 的 run 方法实现 cron.Job 接口
 func (j *Job) Run() {
 	// As this function should comply with the Job interface of the cron package we will use
@@ -312,7 +314,7 @@ func (j *Job) isRunnable(logger *logrus.Entry) bool {
 
 	// 禁止并发执行
 	if j.Concurrency == ConcurrencyForbid {
-		// 通过 GRPC 调取获取所有当前正在执行的任务, 只是调度任务的时候检查是否同时执行
+		// 通过 GRPC 调取获取所有节点正在执行的任务, 只是调度任务的时候检查是否同时执行
 		exs, err := j.Agent.GetActiveExecutions()
 		if err != nil {
 			logger.WithError(err).Error("job: Error quering for running executions")

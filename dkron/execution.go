@@ -42,9 +42,9 @@ type Execution struct {
 // NewExecution creates a new execution.
 func NewExecution(jobName string) *Execution {
 	return &Execution{
-		JobName: jobName,
-		Group:   time.Now().UnixNano(),
-		Attempt: 1,
+		JobName: jobName,               // 任务名
+		Group:   time.Now().UnixNano(), // 时间戳
+		Attempt: 1,                     // 尝试次数
 	}
 }
 

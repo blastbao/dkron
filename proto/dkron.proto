@@ -65,14 +65,14 @@ message GetJobResponse {
 }
 
 message Execution {
-  string job_name = 1;
-	bool success = 2;
-	bytes output = 3;
-	string node_name = 4;
-	int64 group = 5;
-  uint32 attempt = 6;
-  google.protobuf.Timestamp started_at = 7;
-  google.protobuf.Timestamp finished_at = 8;
+  string job_name = 1;    // 任务名称
+	bool success = 2;       // 执行结果
+	bytes output = 3;       // 输出
+	string node_name = 4;   // 节点名
+	int64 group = 5;        //
+  uint32 attempt = 6;     // 尝试次数
+  google.protobuf.Timestamp started_at = 7;   // 开始时间
+  google.protobuf.Timestamp finished_at = 8;  // 结束时间
 }
 
 message ExecutionDoneRequest {

@@ -1,4 +1,5 @@
 site/
+.idea
 /public
 /website/public
 docs/scss/Gemfile.lock

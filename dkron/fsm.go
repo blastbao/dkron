@@ -71,6 +71,7 @@ func (d *dkronFSM) Apply(l *raft.Log) interface{} {
 	}
 
 	// Check enterprise only message types.
+	// 其它类型的消息，可以走自定义逻辑
 	if applier, ok := d.proAppliers[msgType]; ok {
 		return applier(buf[1:], l.Index)
 	}
@@ -79,13 +80,14 @@ func (d *dkronFSM) Apply(l *raft.Log) interface{} {
 }
 
 func (d *dkronFSM) applySetJob(buf []byte) interface{} {
-	// 解析 protobuf 序列化的 bytes
+	// 反序列化 []byte => protobuf
 	var pj dkronpb.Job
 	if err := proto.Unmarshal(buf, &pj); err != nil {
 		return err
 	}
-	// protobuf 到 golang struct 转换
+	// 字段映射 protobuf => golang struct
 	job := NewJobFromProto(&pj)
+	// 存储到 store
 	if err := d.store.SetJob(job, false); err != nil {
 		return err
 	}
@@ -93,10 +95,12 @@ func (d *dkronFSM) applySetJob(buf []byte) interface{} {
 }
 
 func (d *dkronFSM) applyDeleteJob(buf []byte) interface{} {
+	// 反序列化 []byte => protobuf
 	var djr dkronpb.DeleteJobRequest
 	if err := proto.Unmarshal(buf, &djr); err != nil {
 		return err
 	}
+	// 从 store 中删除
 	job, err := d.store.DeleteJob(djr.GetJobName())
 	if err != nil {
 		return err
@@ -105,17 +109,18 @@ func (d *dkronFSM) applyDeleteJob(buf []byte) interface{} {
 }
 
 func (d *dkronFSM) applyExecutionDone(buf []byte) interface{} {
+	// 反序列化 []byte => protobuf
 	var execDoneReq dkronpb.ExecutionDoneRequest
 	if err := proto.Unmarshal(buf, &execDoneReq); err != nil {
 		return err
 	}
+	// 转换 pb => model
 	execution := NewExecutionFromProto(execDoneReq.Execution)
-
 	d.logger.WithField("execution", execution.Key()).
 		WithField("output", string(execution.Output)).
 		Debug("fsm: Setting execution")
+	// 保存到 store
 	_, err := d.store.SetExecutionDone(execution)
-
 	return err
 }
 
