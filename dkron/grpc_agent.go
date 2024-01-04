@@ -61,9 +61,7 @@ func (as *AgentServer) AgentRun(req *types.AgentRunRequest, stream types.Agent_A
 	}).Info("grpc_agent: Starting job")
 
 	output, _ := circbuf.NewBuffer(maxBufSize)
-
 	var success bool
-
 	jex := job.Executor
 	exc := job.ExecutorConfig
 
@@ -77,7 +75,6 @@ func (as *AgentServer) AgentRun(req *types.AgentRunRequest, stream types.Agent_A
 	}); err != nil {
 		return err
 	}
-
 	if jex == "" {
 		return errors.New("grpc_agent: No executor defined, nothing to do")
 	}

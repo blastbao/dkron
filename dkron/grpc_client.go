@@ -86,7 +86,6 @@ func (grpcc *GRPCClient) ExecutionDone(addr string, execution *Execution) error 
 			conn.Close()
 			return nil
 		}
-
 		grpcc.logger.WithError(err).WithFields(logrus.Fields{
 			"method":      "ExecutionDone",
 			"server_addr": addr,

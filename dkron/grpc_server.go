@@ -228,43 +228,39 @@ func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.E
 	// 5. 检查执行是否失败，如果执行失败且重试次数小于 Job 最大重试次数，则重试。
 	// If the execution failed, retry it until retries limit (default: don't retry)
 	execution := NewExecutionFromProto(&pbex)
-	if !execution.Success && uint(execution.Attempt) < job.Retries+1 {
+	if !execution.Success && execution.Attempt < job.Retries+1 {
+		// 重试次数 +1
 		execution.Attempt++
-
-		// Keep all execution properties intact except the last output
-		execution.Output = ""
-
+		execution.Output = "" // Keep all execution properties intact except the last output
 		grpcs.logger.WithFields(logrus.Fields{
 			"attempt":   execution.Attempt,
 			"execution": execution,
 		}).Debug("grpc: Retrying execution")
-
+		// 执行 execution
 		if _, err := grpcs.agent.Run(job.Name, execution); err != nil {
 			return nil, err
 		}
-
+		// 构造响应
 		return &proto.ExecutionDoneResponse{
 			From:    grpcs.agent.config.NodeName,
 			Payload: []byte("retry"),
 		}, nil
 	}
 
-	exg, err := grpcs.agent.Store.GetExecutionGroup(execution,
-		&ExecutionOptions{
-			Timezone: job.GetTimeLocation(),
-		},
-	)
+	// 提取出和 execution 属于同一个 group 的其它 executions
+	exg, err := grpcs.agent.Store.GetExecutionGroup(execution, &ExecutionOptions{Timezone: job.GetTimeLocation()})
 	if err != nil {
 		grpcs.logger.WithError(err).WithField("group", execution.Group).Error("grpc: Error getting execution group.")
 		return nil, err
 	}
 
+	// 6. 发送执行完毕的通知(email/webhook)
 	// Send notification
 	if err := Notification(grpcs.agent.config, execution, exg, job).Send(grpcs.logger); err != nil {
 		return nil, err
 	}
 
-	// 执行依赖的任务
+	// 7. 执行依赖的任务
 	// Jobs that have dependent jobs are a bit more expensive because we need to call the Status() method for every execution.
 	// Check first if there's dependent jobs and then check for the job status to begin execution dependent jobs on success.
 	if len(job.DependentJobs) > 0 && job.Status == StatusSuccess {

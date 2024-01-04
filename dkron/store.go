@@ -503,17 +503,19 @@ func (*Store) listTxFunc(prefix string, kvs *[]kv, found *bool, opts *ExecutionO
 
 // GetExecutionGroup returns all executions in the same group of a given execution
 func (s *Store) GetExecutionGroup(execution *Execution, opts *ExecutionOptions) ([]*Execution, error) {
+	// 查询 job 下所有 executions
 	res, err := s.GetExecutions(execution.JobName, opts)
 	if err != nil {
 		return nil, err
 	}
-
+	// 提取出属于 Group 的那些 executions
 	var executions []*Execution
 	for _, ex := range res {
 		if ex.Group == execution.Group {
 			executions = append(executions, ex)
 		}
 	}
+	// 返回
 	return executions, nil
 }
 

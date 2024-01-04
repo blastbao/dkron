@@ -307,8 +307,7 @@ func (j *Job) isRunnable(logger *logrus.Entry) bool {
 
 	// pro 功能
 	if j.Agent.GlobalLock {
-		logger.WithField("job", j.Name).
-			Warning("job: Skipping execution because active global lock")
+		logger.WithField("job", j.Name).Warning("job: Skipping execution because active global lock")
 		return false
 	}
 
