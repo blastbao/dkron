@@ -145,8 +145,7 @@ func NewAgent(config *Config, options ...AgentOption) *Agent {
 	return agent
 }
 
-// Start the current agent by running all the necessary
-// checks and server or client routines.
+// Start the current agent by running all the necessary checks and server or client routines.
 func (a *Agent) Start() error {
 	log := InitLogger(a.config.LogLevel, a.config.NodeName)
 	a.logger = log
@@ -220,6 +219,7 @@ func (a *Agent) Start() error {
 		a.GRPCClient = NewGRPCClient(nil, a, a.logger)
 	}
 
+	// 广播消息，通知 tags 变更
 	tags := a.serf.LocalMember().Tags
 	tags["rpc_addr"] = a.advertiseRPCAddr() // Address that clients will use to RPC to servers
 	tags["port"] = strconv.Itoa(a.config.AdvertiseRPCPort)
@@ -255,20 +255,20 @@ func (a *Agent) Stop() error {
 	a.logger.Info("agent: Called member stop, now stopping")
 
 	if a.config.Server {
-		a.raft.Shutdown()
-		a.Store.Shutdown()
+		a.raft.Shutdown()  // 关闭 raft
+		a.Store.Shutdown() // 关闭 store
 	}
 
 	if a.config.Server && a.sched.Started {
-		a.sched.Stop()
-		a.sched.ClearCron()
+		a.sched.Stop()      // 关闭 job sched
+		a.sched.ClearCron() // 释放资源
 	}
 
-	if err := a.serf.Leave(); err != nil {
+	if err := a.serf.Leave(); err != nil { // 主动退出 serf
 		return err
 	}
 
-	if err := a.serf.Shutdown(); err != nil {
+	if err := a.serf.Shutdown(); err != nil { // 关闭 serf
 		return err
 	}
 
@@ -658,6 +658,7 @@ func (a *Agent) Leader() raft.ServerAddress {
 }
 
 // Servers returns a list of known server
+// 返回 alive 的 serf servers 列表（所有 regions）
 func (a *Agent) Servers() (members []*ServerParts) {
 	for _, member := range a.serf.Members() {
 		ok, parts := isServer(member)
@@ -670,7 +671,7 @@ func (a *Agent) Servers() (members []*ServerParts) {
 }
 
 // LocalServers returns a list of the local known server
-// 返回正常运行的 server 列表
+// 返回 alive 的 serf servers 列表（属于同一 region）
 func (a *Agent) LocalServers() (members []*ServerParts) {
 	for _, member := range a.serf.Members() {
 		ok, parts := isServer(member)
@@ -926,6 +927,8 @@ func (a *Agent) GetRunningJobs() int {
 }
 
 // GetActiveExecutions returns running executions globally
+//
+// 获取整个 serf 集群中每个 server 正在执行的 executions
 func (a *Agent) GetActiveExecutions() ([]*proto.Execution, error) {
 	var executions []*proto.Execution
 
@@ -936,7 +939,6 @@ func (a *Agent) GetActiveExecutions() ([]*proto.Execution, error) {
 		if err != nil {
 			return nil, err
 		}
-
 		executions = append(executions, exs...)
 	}
 
@@ -963,11 +965,12 @@ func (a *Agent) recursiveSetJob(jobs []*Job) []string {
 
 // Check if the server is alive and select it
 func (a *Agent) checkAndSelectServer() (string, error) {
+	// 返回 alive 的 serf servers 列表（属于同一 region）
 	var peers []string
 	for _, p := range a.LocalServers() {
 		peers = append(peers, p.RPCAddr.String())
 	}
-
+	// 获取其中能成功 connect 的首个 serf server 的 addr
 	for _, peer := range peers {
 		a.logger.WithField("peer", peer).Debug("Checking peer")
 		conn, err := net.DialTimeout("tcp", peer, 1*time.Second)

@@ -300,6 +300,9 @@ func (j *Job) GetNext() (time.Time, error) {
 	return time.Time{}, nil
 }
 
+// 判断 job 是否在执行中。
+//
+// 通过 agent 拉取整个 serf 集群中每个 server 正在执行的 executions ，如果其中包含 job ，则为正在执行中。
 func (j *Job) isRunnable(logger *logrus.Entry) bool {
 	if j.Disabled {
 		return false
@@ -446,7 +449,6 @@ func findParentJobInChildJobs(jobs []*Job, job *Job) bool {
 					return true
 				}
 			}
-
 		}
 	}
 	return false

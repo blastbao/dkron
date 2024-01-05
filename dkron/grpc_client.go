@@ -15,6 +15,8 @@ import (
 )
 
 // DkronGRPCClient defines the interface that any gRPC client for dkron should implement.
+//
+// 集群中任一节点都持有 `GRPCClient` ，用来向 Raft Leader 发送请求。
 type DkronGRPCClient interface {
 	Connect(string) (*grpc.ClientConn, error)
 	ExecutionDone(string, *Execution) error
@@ -437,10 +439,13 @@ func (grpcc *GRPCClient) AgentRun(addr string, job *proto.Job, execution *proto.
 
 			grpcc.logger.WithError(err).Error(ErrBrokenStream)
 
+			// [重要]
+			// ???
 			addr := grpcc.agent.raft.Leader()
 			if err := grpcc.ExecutionDone(string(addr), NewExecutionFromProto(execution)); err != nil {
 				return err
 			}
+
 			return err
 		}
 

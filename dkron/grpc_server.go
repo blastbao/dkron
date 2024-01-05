@@ -288,11 +288,14 @@ func (grpcs *GRPCServer) Leave(ctx context.Context, in *empty.Empty) (*empty.Emp
 
 // RunJob runs a job in the cluster
 func (grpcs *GRPCServer) RunJob(ctx context.Context, req *proto.RunJobRequest) (*proto.RunJobResponse, error) {
+	// 将 job 封装成 execution
 	ex := NewExecution(req.JobName)
+	// 执行 execution
 	job, err := grpcs.agent.Run(req.JobName, ex)
 	if err != nil {
 		return nil, err
 	}
+	// 响应
 	jpb := job.ToProto()
 	return &proto.RunJobResponse{Job: jpb}, nil
 }

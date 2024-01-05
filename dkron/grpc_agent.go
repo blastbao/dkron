@@ -49,7 +49,8 @@ func NewAgentServer(agent *Agent, logger *logrus.Entry) types.AgentServer {
 
 // AgentRun is called when an agent starts running a job and lasts all execution,
 // the agent will stream execution progress to the server.
-// Dkron agent 执行任务, GRPC 客户端推流
+//
+// AgentRun 在 agent 开始运行作业时被调用，并持续整个执行过程，agent 将实时将执行进度流式传输到服务器。
 func (as *AgentServer) AgentRun(req *types.AgentRunRequest, stream types.Agent_AgentRunServer) error {
 	defer metrics.MeasureSince([]string{"grpc_agent", "agent_run"}, time.Now())
 

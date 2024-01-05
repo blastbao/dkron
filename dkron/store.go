@@ -425,18 +425,14 @@ func (s *Store) DeleteJob(name string) (*Job, error) {
 		if err := s.getJobTxFunc(name, &pbj)(tx); err != nil {
 			return err
 		}
-		// Check if the job has dependent jobs
-		// and return an error indicating to remove childs
-		// first.
+		// Check if the job has dependent jobs and return an error indicating to remove childs first.
 		if len(pbj.DependentJobs) > 0 {
 			return ErrDependentJobs
 		}
 		job = NewJobFromProto(&pbj)
-
 		if err := s.deleteExecutionsTxFunc(name)(tx); err != nil {
 			return err
 		}
-
 		_, err := tx.Delete(fmt.Sprintf("%s:%s", jobsPrefix, name))
 		return err
 	})

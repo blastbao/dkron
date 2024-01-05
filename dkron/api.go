@@ -437,16 +437,19 @@ func (h *HTTPTransport) jobToggleHandler(c *gin.Context) {
 func (h *HTTPTransport) busyHandler(c *gin.Context) {
 	executions := []*Execution{}
 
+	// 获取整个 serf 集群中每个 server 正在执行的 executions
 	exs, err := h.agent.GetActiveExecutions()
 	if err != nil {
 		c.AbortWithError(http.StatusInternalServerError, err)
 		return
 	}
 
+	// pb => model
 	for _, e := range exs {
 		executions = append(executions, NewExecutionFromProto(e))
 	}
 
+	// 基于开始时间生序排序
 	sort.SliceStable(executions, func(i, j int) bool {
 		return executions[i].StartedAt.Before(executions[j].StartedAt)
 	})

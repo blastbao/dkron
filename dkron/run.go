@@ -21,6 +21,7 @@ func (a *Agent) Run(jobName string, ex *Execution) (*Job, error) {
 	}
 
 	// In case the job is not a child job, compute the next execution time
+	// 如果当前 job 不是某个 job 的子任务，计算下一次执行时间，更新 job.Next 字段。
 	if job.ParentJob == "" {
 		// 获取 cron.Entry
 		if e, ok := a.sched.GetEntry(jobName); ok {

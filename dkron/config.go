@@ -186,11 +186,13 @@ const (
 // DefaultConfig returns a Config struct pointer with sensible
 // default settings.
 func DefaultConfig() *Config {
+	// 当前主机名
 	hostname, err := os.Hostname()
 	if err != nil {
 		log.Panic(err)
 	}
 
+	// 标签
 	tags := map[string]string{}
 
 	return &Config{
