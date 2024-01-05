@@ -312,10 +312,9 @@ func (h *HTTPTransport) restoreHandler(c *gin.Context) {
 		c.AbortWithError(http.StatusBadRequest, err)
 		return
 	}
-	var jobs []*Job
-	err = json.Unmarshal(data, &jobs)
 
-	if err != nil {
+	var jobs []*Job
+	if err = json.Unmarshal(data, &jobs); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err)
 		return
 	}
@@ -325,6 +324,7 @@ func (h *HTTPTransport) restoreHandler(c *gin.Context) {
 		c.AbortWithError(http.StatusBadRequest, err)
 		return
 	}
+
 	result := h.agent.recursiveSetJob(jobTree)
 	resp, err := json.Marshal(result)
 	if err != nil {

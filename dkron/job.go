@@ -437,6 +437,7 @@ func findParentJobAndValidateJob(jobs []*Job, index int) ([]*Job, bool, error) {
 	return nil, false, ErrNoParent
 }
 
+// 判断 job 是否是 jobs 中某个 job 的 child ，或者是 jobs 中某个 job 的 child 的 child ... (递归)
 func findParentJobInChildJobs(jobs []*Job, job *Job) bool {
 	for _, parentJob := range jobs {
 		if job.ParentJob == parentJob.Name {

@@ -241,6 +241,8 @@ func (a *Agent) RetryJoinCh() <-chan error {
 // JoinLAN is used to have Dkron join the inner-DC pool
 // The target address should be another node inside the DC
 // listening on the Serf LAN address
+//
+// 加入 serf 集群(局域网)
 func (a *Agent) JoinLAN(addrs []string) (int, error) {
 	return a.serf.Join(addrs, true)
 }
@@ -336,7 +338,7 @@ func (a *Agent) setupRaft() error {
 		}
 		a.raftStore = s
 
-		// （稳定存储，用来存储 Raft 集群的节点信息等），比如，当前任期编号、最新投票时的任期编号等
+		//（稳定存储，用来存储 Raft 集群的节点信息等），比如，当前任期编号、最新投票时的任期编号等
 		stableStore = s
 
 		// Wrap the store in a LogCache to improve performance

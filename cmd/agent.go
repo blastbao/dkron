@@ -90,6 +90,7 @@ WAIT:
 	select {
 	case s := <-signalCh:
 		sig = s
+	// 加入 serf 集群失败
 	case err := <-agent.RetryJoinCh():
 		fmt.Println("[ERR] agent: Retry join failed: ", err)
 		return 1
