@@ -43,7 +43,7 @@ func NewScheduler(logger *logrus.Entry) *Scheduler {
 
 // Start the cron scheduler, adding its corresponding jobs and
 // executing them on time.
-// 启动调度器：遍历 jobs ，挨个设置 job.Agent ，然后添加到 Scheduler 中，之后执行 Scheduler.Cron.Start() ；
+// 启动调度器：遍历 jobs ，挨个设置 job.Agent 为当前 agent ，然后添加到 Cron 中，之后执行 Cron.Start() ；
 func (s *Scheduler) Start(jobs []*Job, agent *Agent) error {
 	// 创建 cron
 	s.Cron = cron.New(cron.WithParser(extcron.NewParser()))

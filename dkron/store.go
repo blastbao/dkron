@@ -332,17 +332,17 @@ func (s *Store) jobHasMetadata(job *Job, metadata map[string]string) bool {
 
 // GetJobs returns all jobs
 func (s *Store) GetJobs(options *JobOptions) ([]*Job, error) {
-
-	// 默认按照 name 排序
+	// 默认按照 name 对 jobs 排序
 	if options == nil {
 		options = &JobOptions{
 			Sort: "name",
 		}
 	}
 
+	// 结果集合 + 查找函数
 	jobs := make([]*Job, 0)
 	jobsFn := func(key, item string) bool {
-		// 反序列化当前 job
+		// 反序列化: 得到 job pb
 		var pbj dkronpb.Job
 		// [TODO] This condition is temporary while we migrate to JSON marshalling for jobs
 		// so we can use BuntDb indexes. To be removed in future versions.
@@ -351,9 +351,10 @@ func (s *Store) GetJobs(options *JobOptions) ([]*Job, error) {
 				return false
 			}
 		}
+		// 格式转换: pb => model
 		job := NewJobFromProto(&pbj)
 		job.logger = s.logger
-
+		// 条件匹配: 添加到结果集
 		if options == nil ||
 			(options.Metadata == nil || len(options.Metadata) == 0 || s.jobHasMetadata(job, options.Metadata)) &&
 				(options.Query == "" || strings.Contains(job.Name, options.Query) || strings.Contains(job.DisplayName, options.Query)) &&
@@ -364,6 +365,7 @@ func (s *Store) GetJobs(options *JobOptions) ([]*Job, error) {
 		return true
 	}
 
+	// 执行查询
 	err := s.db.View(func(tx *buntdb.Tx) error {
 		var err error
 		if options.Order == "DESC" {

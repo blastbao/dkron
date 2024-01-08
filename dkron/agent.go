@@ -495,6 +495,7 @@ func (a *Agent) setupSerf() (*serf.Serf, error) {
 	}
 
 	// Create a channel to listen for events from Serf
+	// [重要] 设置 serf 回调管道
 	a.eventCh = make(chan serf.Event, 2048)
 	serfConfig.EventCh = a.eventCh
 

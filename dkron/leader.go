@@ -36,27 +36,23 @@ func (a *Agent) monitorLeadership() {
 					continue
 				}
 				weAreLeaderCh = make(chan struct{})
-
 				leaderLoop.Add(1)
 				go func(ch chan struct{}) {
 					defer leaderLoop.Done()
 					a.leaderLoop(ch)
 				}(weAreLeaderCh)
 				a.logger.Info("dkron: cluster leadership acquired")
-
 			default:
 				if weAreLeaderCh == nil {
 					a.logger.Error("dkron: attempted to stop the leader loop while not running")
 					continue
 				}
-
 				a.logger.Debug("dkron: shutting down leader loop")
 				close(weAreLeaderCh)
 				leaderLoop.Wait()
 				weAreLeaderCh = nil
 				a.logger.Info("dkron: cluster leadership lost")
 			}
-
 		case <-a.shutdownCh:
 			return
 		}
@@ -71,11 +67,13 @@ func (a *Agent) leaderLoop(stopCh chan struct{}) {
 	establishedLeader := false
 
 RECONCILE:
+
 	// Setup a reconciliation timer
 	reconcileCh = nil
 	interval := time.After(a.config.ReconcileInterval)
 
 	// Apply a raft barrier to ensure our FSM is caught up
+	// [重要] 等待 raft 集群中大部分达成一致，也就是当下集群中只有一个 leader ，也即当前节点。
 	start := time.Now()
 	barrier := a.raft.Barrier(barrierWriteTimeout)
 	if err := barrier.Error(); err != nil {
@@ -85,20 +83,17 @@ RECONCILE:
 	metrics.MeasureSince([]string{"dkron", "leader", "barrier"}, start)
 
 	// Check if we need to handle initial leadership actions
+	// 启动 leader 的工作任务，把 jobs 添加到 cron 中并启动
 	if !establishedLeader {
 		if err := a.establishLeadership(stopCh); err != nil {
 			a.logger.WithError(err).Error("dkron: failed to establish leadership")
-
-			// Immediately revoke leadership since we didn't successfully
-			// establish leadership.
+			// Immediately revoke leadership since we didn't successfully establish leadership.
 			if err := a.revokeLeadership(); err != nil {
 				a.logger.WithError(err).Error("dkron: failed to revoke leadership")
 			}
-
 			goto WAIT
 		}
-
-		establishedLeader = true
+		establishedLeader = true // 已经启动
 		defer func() {
 			if err := a.revokeLeadership(); err != nil {
 				a.logger.WithError(err).Error("dkron: failed to revoke leadership")
@@ -107,18 +102,17 @@ RECONCILE:
 	}
 
 	// Reconcile any missing data
+	// 同步全局状态，确保 serf 和 raft 的 cluster 集群状态一致。
 	if err := a.reconcile(); err != nil {
 		a.logger.WithError(err).Error("dkron: failed to reconcile")
 		goto WAIT
 	}
 
-	// Initial reconcile worked, now we can process the channel
-	// updates
+	// Initial reconcile worked, now we can process the channel updates
 	reconcileCh = a.reconcileCh
 
 	// Poll the stop channel to give it priority so we don't waste time
-	// trying to perform the other operations if we have been asked to shut
-	// down.
+	// trying to perform the other operations if we have been asked to shut down.
 	select {
 	case <-stopCh:
 		return
@@ -136,7 +130,7 @@ WAIT:
 		case <-interval:
 			goto RECONCILE
 		case member := <-reconcileCh:
-			a.reconcileMember(member)
+			a.reconcileMember(member) // 根据 serf 节点状态更新 raft
 		}
 	}
 }
@@ -156,6 +150,9 @@ func (a *Agent) reconcile() error {
 
 // reconcileMember is used to do an async reconcile of a single serf member
 func (a *Agent) reconcileMember(member serf.Member) error {
+	// 1. 忽略本机
+
+	// 2. 根据 m.Tags 做一些过滤：IP/Port 是否合法、DC/Region 是否匹配、Version 是否匹配 ...
 	// Check if this is a member we should handle
 	valid, parts := isServer(member)
 	if !valid || parts.Region != a.config.Region {
@@ -163,6 +160,7 @@ func (a *Agent) reconcileMember(member serf.Member) error {
 	}
 	defer metrics.MeasureSince([]string{"dkron", "leader", "reconcileMember"}, time.Now())
 
+	// 3. 根据节点状态更新 raft
 	var err error
 	switch member.Status {
 	case serf.StatusAlive:
@@ -174,6 +172,7 @@ func (a *Agent) reconcileMember(member serf.Member) error {
 		a.logger.WithError(err).WithField("member", member).Error("failed to reconcile member")
 		return err
 	}
+
 	return nil
 }
 
@@ -181,17 +180,20 @@ func (a *Agent) reconcileMember(member serf.Member) error {
 // to invoke an initial barrier. The barrier is used to ensure any
 // previously inflight transactions have been committed and that our
 // state is up-to-date.
+//
+// 一旦成为领导者并能够发起初始的 barrier 操作，就会调用 establishLeadership 方法。
+// barrier 操作用于确保之前正在进行中的事务已经提交，并且当前状态是最新的。
 func (a *Agent) establishLeadership(stopCh chan struct{}) error {
 	defer metrics.MeasureSince([]string{"dkron", "leader", "establish_leadership"}, time.Now())
-
 	a.logger.Info("agent: Starting scheduler")
+
+	// 查询所有 Jobs
 	jobs, err := a.Store.GetJobs(nil)
 	if err != nil {
 		a.logger.Fatal(err)
 	}
-	// 只有 Leader 才会启动调度器
+	// 将 jobs 添加到 cron 后并启动
 	a.sched.Start(jobs, a)
-
 	return nil
 }
 
@@ -199,15 +201,32 @@ func (a *Agent) establishLeadership(stopCh chan struct{}) error {
 // This is used to cleanup any state that may be specific to a leader.
 func (a *Agent) revokeLeadership() error {
 	defer metrics.MeasureSince([]string{"dkron", "leader", "revoke_leadership"}, time.Now())
+	// 停止 cron
 	a.sched.Stop()
-
 	return nil
 }
 
 // addRaftPeer is used to add a new Raft peer when a dkron server joins
+// 当一个新的 dkron 服务器（即一个 Serf 节点）加入时，会执行 addRaftPeer 函数，用于将该节点添加为 Raft 集群中的一个 Peer 节点。
+//
+//	首先，在添加节点之前会检查当前集群中是否已经存在一个处于 Bootstrap 模式的节点。
+//	如果存在，则不允许再添加新的节点。这是由于当多个节点同时处于 Bootstrap 模式时，可能会导致集群状态不一致或者发生脑裂等问题。
+//	所以，boostrap 节点只能有一个。
+//
+//	然后，将该节点的地址和端口转换为 TCP 地址，并获取当前 Raft 集群的配置信息。
+//	如果当前节点正在加入 Raft 集群，则检查当前集群是否至少有三个节点，如果不足，则返回不处理。
+//	这是因为在 Raft 中最少需要三个节点才能进行共识算法。
+//
+//	接着，检查当前节点是否已经存在于 Raft 集群中。如果已经存在，无需重复添加。
+//	如果地址相同但 ID 不同，则需要先将旧节点从 Raft 集群中删除，然后再添加新节点。
+//
+//	最后，将该节点添加为新的 Raft Peer 节点。
+//	如果添加成功，则该节点会参与 Raft 算法的投票和日志复制。
+//	如果添加失败，则会返回相应的错误信息。
 func (a *Agent) addRaftPeer(m serf.Member, parts *ServerParts) error {
 	// Check for possibility of multiple bootstrap nodes
-	members := a.serf.Members()
+	// 检查是否有可能有多个引导节点。引导节点是负责初始化集群的第一个节点，如果有多个引导节点，则不添加新 peer ，避免一致性问题。
+	var members = a.serf.Members()
 	if parts.Bootstrap {
 		for _, member := range members {
 			valid, p := isServer(member)
@@ -239,14 +258,17 @@ func (a *Agent) addRaftPeer(m serf.Member, parts *ServerParts) error {
 	// but we want to avoid doing that if possible to prevent useless Raft
 	// log entries. If the address is the same but the ID changed, remove the
 	// old server before adding the new one.
+	// 遍历当前 Raft 配置，检查新节点是否已经在集群中。如果已经在集群中，那么不需要再次添加。
 	for _, server := range configFuture.Configuration().Servers {
-
 		// If the address or ID matches an existing server, see if we need to remove the old one first
 		if server.Address == raft.ServerAddress(addr) || server.ID == raft.ServerID(parts.ID) {
 			// Exit with no-op if this is being called on an existing server and both the ID and address match
+			// 若 IP 和 ID 均相同，意味着当前节点已经存在于集群中，无需添加到 raft 集群中。
 			if server.Address == raft.ServerAddress(addr) && server.ID == raft.ServerID(parts.ID) {
 				return nil
 			}
+			// 否则，意味着发生冲突，需要删除当前在 raft 集群中的节点，再重新添加。
+			// 因为在 Raft 集群中，每个节点必须具有唯一的 ID ，如果新增节点与现有节点具有相同的 ID ，则需要先删除现有节点，然后再添加新节点。
 			future := a.raft.RemoveServer(server.ID, 0, 0)
 			if server.Address == raft.ServerAddress(addr) {
 				if err := future.Error(); err != nil {
@@ -263,6 +285,8 @@ func (a *Agent) addRaftPeer(m serf.Member, parts *ServerParts) error {
 	}
 
 	// Attempt to add as a peer
+	// 尝试将新节点添加到 Raft 集群中。
+	// 如果添加成功，则新节点将成为 Raft集 群的一部分，能够参与 Leader 选举和日志复制。
 	switch {
 	case minRaftProtocol >= 3:
 		addFuture := a.raft.AddVoter(raft.ServerID(parts.ID), raft.ServerAddress(addr), 0, 0)
