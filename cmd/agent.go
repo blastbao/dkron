@@ -65,7 +65,7 @@ func agentRun(args ...string) error {
 	// withXXX 是 options func
 	// config 在 cobra init 时通过 viper 加载
 	agent = dkron.NewAgent(config, dkron.WithPlugins(plugins))
-	// 启动 dkron
+	// [重要] 启动 dkron
 	if err := agent.Start(); err != nil {
 		return err
 	}

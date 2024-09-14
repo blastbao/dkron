@@ -206,6 +206,7 @@ func (a *Agent) localMemberEvent(me serf.MemberEvent) {
 		if isReap {
 			m.Status = StatusReap
 		}
+		// 这里的写入使用了 select ，避免阻塞。
 		select {
 		case a.reconcileCh <- m:
 		default:

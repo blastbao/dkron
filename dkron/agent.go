@@ -81,7 +81,7 @@ type Agent struct {
 
 	serf        *serf.Serf
 	config      *Config
-	eventCh     chan serf.Event
+	serfEventCh chan serf.Event
 	sched       *Scheduler
 	ready       bool
 	shutdownCh  chan struct{}
@@ -91,6 +91,7 @@ type Agent struct {
 	// region to protect operations that require strong consistency
 	leaderCh <-chan bool
 	raft     *raft.Raft
+
 	// raftLayer provides network layering of the raft RPC along with
 	// the Dkron gRPC transport layer.
 	raftLayer     *RaftLayer
@@ -146,6 +147,10 @@ func NewAgent(config *Config, options ...AgentOption) *Agent {
 }
 
 // Start the current agent by running all the necessary checks and server or client routines.
+//
+// 首先，启动 serf ，集群成员变更通过 a.serfEventCh 管道获取；
+// 然后，启动 raft ，；
+// 接着，启动 a.eventLoop() 协程，从 a.serfEventCh 订阅 serf 变更事件，并转发到 a.reconcileCh 中，进而触发 raft 集群成员变更；
 func (a *Agent) Start() error {
 	log := InitLogger(a.config.LogLevel, a.config.NodeName)
 	a.logger = log
@@ -189,7 +194,7 @@ func (a *Agent) Start() error {
 	}
 	a.listener = l
 
-	// 启动模式
+	// [重要] 启动模式
 	if a.config.Server {
 		// server 模式
 		// 1. 开启 raft 选举, raft 持久化储存
@@ -225,7 +230,7 @@ func (a *Agent) Start() error {
 	tags["port"] = strconv.Itoa(a.config.AdvertiseRPCPort)
 	a.serf.SetTags(tags)
 
-	// 处理事件
+	// 处理 serf 事件
 	go a.eventLoop()
 	a.ready = true
 
@@ -496,8 +501,8 @@ func (a *Agent) setupSerf() (*serf.Serf, error) {
 
 	// Create a channel to listen for events from Serf
 	// [重要] 设置 serf 回调管道
-	a.eventCh = make(chan serf.Event, 2048)
-	serfConfig.EventCh = a.eventCh
+	a.serfEventCh = make(chan serf.Event, 2048)
+	serfConfig.EventCh = a.serfEventCh
 
 	// Start Serf
 	a.logger.Info("agent: Dkron agent starting")
@@ -532,6 +537,8 @@ func (a *Agent) SetConfig(c *Config) {
 // StartServer launch a new dkron server process
 // 启动 Server
 func (a *Agent) StartServer() {
+
+	// [重要] 底层存储，会和 FSM 结合使用，实现分布式一致的状态存储。
 	if a.Store == nil {
 		// 初始化内存 DB
 		s, err := NewStore(a.logger)
@@ -541,13 +548,13 @@ func (a *Agent) StartServer() {
 		a.Store = s
 	}
 
-	// 创建调度器, 只有 server 有调度器
+	// [重要] 创建调度器, 只有 server 有调度器，当且仅当其为 leader 时会启动调度器；
 	a.sched = NewScheduler(a.logger)
 
+	// 启动 HTTP API 接口
 	if a.HTTPTransport == nil {
 		a.HTTPTransport = NewTransport(a, a.logger)
 	}
-	// 创建 HTTP API 接口
 	a.HTTPTransport.ServeHTTP()
 
 	// 创建端口复用 cmux
@@ -597,7 +604,6 @@ func (a *Agent) StartServer() {
 	if a.GRPCServer == nil {
 		a.GRPCServer = NewGRPCServer(a, a.logger)
 	}
-
 	// 启动 GRPC Server
 	if err := a.GRPCServer.Serve(grpcl); err != nil {
 		a.logger.WithError(err).Fatal("agent: RPC server failed to start")
@@ -621,6 +627,7 @@ func (a *Agent) StartServer() {
 		}
 	}()
 	go a.monitorLeadership()
+
 	// 匿名上报
 	a.startReporter()
 }
@@ -699,7 +706,7 @@ func (a *Agent) eventLoop() {
 	for {
 		select {
 		// Serf event 事件处理
-		case e := <-a.eventCh:
+		case e := <-a.serfEventCh:
 			// 有三种事件 MemberEvent/UserEvent/Query
 			// 这里只处理 MemberEvent, 只使用 Serf 做集群 member 的管理
 			// 实际运行时主要的 MemberEvent 事件有 update/failed/join
@@ -763,6 +770,7 @@ func (a *Agent) join(addrs []string, replay bool) (n int, err error) {
 	return
 }
 
+// [重要]
 func (a *Agent) processFilteredNodes(job *Job) (map[string]string, map[string]string, error) {
 	// The final set of nodes will be the intersection of all groups
 	// 最终的节点集将是所有组的交集

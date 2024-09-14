@@ -10,6 +10,7 @@ import (
 )
 
 // Execution type holds all of the details of a specific Execution.
+// 执行详情
 type Execution struct {
 	// Id is the Key for this execution
 	Id string `json:"id,omitempty"`

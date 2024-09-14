@@ -52,7 +52,7 @@ func newFSM(store Storage, logAppliers LogAppliers, logger *logrus.Entry) *dkron
 }
 
 // Apply applies a Raft log entry to the key-value store.
-// 创建/同步一条 Log 到 state
+// 创建/同步一条 Log 到 raft state machine
 func (d *dkronFSM) Apply(l *raft.Log) interface{} {
 	buf := l.Data
 	msgType := MessageType(buf[0])
@@ -61,13 +61,13 @@ func (d *dkronFSM) Apply(l *raft.Log) interface{} {
 
 	switch msgType {
 	case SetJobType:
-		return d.applySetJob(buf[1:])
+		return d.applySetJob(buf[1:]) // 保存任务
 	case DeleteJobType:
-		return d.applyDeleteJob(buf[1:])
+		return d.applyDeleteJob(buf[1:]) // 删除任务
 	case ExecutionDoneType:
-		return d.applyExecutionDone(buf[1:])
+		return d.applyExecutionDone(buf[1:]) // 执行完毕
 	case SetExecutionType:
-		return d.applySetExecution(buf[1:])
+		return d.applySetExecution(buf[1:]) // 执行类型
 	}
 
 	// Check enterprise only message types.
