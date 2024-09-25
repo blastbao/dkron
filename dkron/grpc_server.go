@@ -82,6 +82,7 @@ func Encode(t MessageType, msg interface{}) ([]byte, error) {
 
 // SetJob broadcast a state change to the cluster members that will store the job.
 // Then restart the scheduler
+//
 // This only works on the leader
 func (grpcs *GRPCServer) SetJob(ctx context.Context, setJobReq *proto.SetJobRequest) (*proto.SetJobResponse, error) {
 	defer metrics.MeasureSince([]string{"grpc", "set_job"}, time.Now())
@@ -166,7 +167,9 @@ func (grpcs *GRPCServer) GetJob(ctx context.Context, getJobReq *proto.GetJobRequ
 }
 
 // ExecutionDone saves the execution to the store
-// 执行完成, 进行后续处理
+// [重要]
+//
+//	执行完成, 进行后续处理
 func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.ExecutionDoneRequest) (*proto.ExecutionDoneResponse, error) {
 	defer metrics.MeasureSince([]string{"grpc", "execution_done"}, time.Now())
 	grpcs.logger.WithFields(logrus.Fields{
@@ -183,6 +186,7 @@ func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.E
 		grpcs.agent.GRPCClient.ExecutionDone(string(addr), NewExecutionFromProto(execDoneReq.Execution))
 		return nil, ErrNotLeader
 	}
+
 	// 当前节点是 leader 。
 
 	// This is the leader at this point, so process the execution, encode the value and apply the log to the cluster.
@@ -287,6 +291,7 @@ func (grpcs *GRPCServer) Leave(ctx context.Context, in *empty.Empty) (*empty.Emp
 }
 
 // RunJob runs a job in the cluster
+// [重要]
 func (grpcs *GRPCServer) RunJob(ctx context.Context, req *proto.RunJobRequest) (*proto.RunJobResponse, error) {
 	// 将 job 封装成 execution
 	ex := NewExecution(req.JobName)
@@ -306,31 +311,40 @@ func (grpcs *GRPCServer) ToggleJob(ctx context.Context, getJobReq *proto.ToggleJ
 }
 
 // RaftGetConfiguration get raft config
+//
+// 获取 Raft 集群的服务器状态以及配置信息，并返回给调用者。
 func (grpcs *GRPCServer) RaftGetConfiguration(ctx context.Context, in *empty.Empty) (*proto.RaftGetConfigurationResponse, error) {
 	// We can't fetch the leader and the configuration atomically with
 	// the current Raft API.
+	//
+	// 获取 raft 配置
 	future := grpcs.agent.raft.GetConfiguration()
 	if err := future.Error(); err != nil {
 		return nil, err
 	}
 
 	// Index the information about the servers.
+	//
+	// 获取 serf members
 	serverMap := make(map[raft.ServerAddress]serf.Member)
 	for _, member := range grpcs.agent.serf.Members() {
 		valid, parts := isServer(member)
 		if !valid {
 			continue
 		}
-
 		addr := (&net.TCPAddr{IP: member.Addr, Port: parts.Port}).String()
 		serverMap[raft.ServerAddress(addr)] = member
 	}
 
 	// Fill out the reply.
+	//
+	// 构造 reply
 	leader := grpcs.agent.raft.Leader()
 	reply := &proto.RaftGetConfigurationResponse{}
 	reply.Index = future.Index()
+	// 遍历 raft cluster 中每个 server
 	for _, server := range future.Configuration().Servers {
+		// 获取 server 关联的 serf member 的节点名以及 tags
 		node := "(unknown)"
 		raftProtocolVersion := "unknown"
 		if member, ok := serverMap[server.Address]; ok {
@@ -339,16 +353,15 @@ func (grpcs *GRPCServer) RaftGetConfiguration(ctx context.Context, in *empty.Emp
 				raftProtocolVersion = raftVsn
 			}
 		}
-
-		entry := &proto.RaftServer{
+		// 把 raft server 和 serf member 的信息组合起来，存入 reply
+		reply.Servers = append(reply.Servers, &proto.RaftServer{
 			Id:           string(server.ID),
 			Node:         node,
 			Address:      string(server.Address),
 			Leader:       server.Address == leader,
 			Voter:        server.Suffrage == raft.Voter,
 			RaftProtocol: raftProtocolVersion,
-		}
-		reply.Servers = append(reply.Servers, entry)
+		})
 	}
 	return reply, nil
 }
@@ -357,6 +370,8 @@ func (grpcs *GRPCServer) RaftGetConfiguration(ctx context.Context, in *empty.Emp
 // quorum but no longer known to Serf or the catalog) by address in the form of
 // "IP:port". The reply argument is not used, but is required to fulfill the RPC
 // interface.
+//
+// 从 Raft 集群中移除一个失效的节点。
 func (grpcs *GRPCServer) RaftRemovePeerByID(ctx context.Context, in *proto.RaftRemovePeerByIDRequest) (*empty.Empty, error) {
 	// Since this is an operation designed for humans to use, we will return
 	// an error if the supplied id isn't among the peers since it's

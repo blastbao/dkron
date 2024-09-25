@@ -243,7 +243,7 @@ func (j *Job) Run() {
 		cronInspect.Set(j.Name, j)
 
 		// Simple execution wrapper
-		ex := NewExecution(j.Name)
+		ex := NewExecution(j.Name) // execution 是 job 的运行时封装
 
 		// 触发调度运行 Job
 		if _, err := j.Agent.Run(j.Name, ex); err != nil {

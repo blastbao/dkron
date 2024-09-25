@@ -71,6 +71,7 @@ func (grpcc *GRPCClient) ExecutionDone(addr string, execution *Execution) error 
 	defer metrics.MeasureSince([]string{"grpc", "call_execution_done"}, time.Now())
 	var conn *grpc.ClientConn
 
+	// 建立 grpc conn
 	conn, err := grpcc.Connect(addr)
 	if err != nil {
 		grpcc.logger.WithError(err).WithFields(logrus.Fields{
@@ -80,6 +81,7 @@ func (grpcc *GRPCClient) ExecutionDone(addr string, execution *Execution) error 
 		return err
 	}
 
+	// 封装 grpc client ，调用 rpc `ExecutionDone`
 	d := proto.NewDkronClient(conn)
 	edr, err := d.ExecutionDone(context.Background(), &proto.ExecutionDoneRequest{Execution: execution.ToProto()})
 	if err != nil {
@@ -100,6 +102,8 @@ func (grpcc *GRPCClient) ExecutionDone(addr string, execution *Execution) error 
 		"from":        edr.From,
 		"payload":     string(edr.Payload),
 	}).Debug("grpc: Response from method")
+
+	// 关闭连接
 	conn.Close()
 	return nil
 }
@@ -233,10 +237,12 @@ func (grpcc *GRPCClient) DeleteJob(jobName string) (*Job, error) {
 }
 
 // RunJob calls the leader passing the job name
+//
+// [重要]
 func (grpcc *GRPCClient) RunJob(jobName string) (*Job, error) {
 	var conn *grpc.ClientConn
 
-	// 让 leader 操作 job
+	// 让 leader 执行 job
 	addr := grpcc.agent.raft.Leader()
 
 	// Initiate a connection with the server
@@ -264,7 +270,6 @@ func (grpcc *GRPCClient) RunJob(jobName string) (*Job, error) {
 	}
 
 	job := NewJobFromProto(res.Job)
-
 	return job, nil
 }
 
@@ -361,10 +366,11 @@ func (grpcc *GRPCClient) GetActiveExecutions(addr string) ([]*proto.Execution, e
 func (grpcc *GRPCClient) SetExecution(execution *proto.Execution) error {
 	var conn *grpc.ClientConn
 
-	// 让 leader 操作 job
+	// 获取 raft leader 的 addr
 	addr := grpcc.agent.raft.Leader()
 
 	// Initiate a connection with the server
+	// 建立 grpc conn
 	conn, err := grpcc.Connect(string(addr))
 	if err != nil {
 		grpcc.logger.WithError(err).WithFields(logrus.Fields{
@@ -376,6 +382,7 @@ func (grpcc *GRPCClient) SetExecution(execution *proto.Execution) error {
 	defer conn.Close()
 
 	// Synchronous call
+	// 封装 grpc client ，调用 `SetExecution` rpc
 	d := proto.NewDkronClient(conn)
 	_, err = d.SetExecution(context.Background(), execution)
 	if err != nil {
@@ -396,6 +403,8 @@ func (grpcc *GRPCClient) AgentRun(addr string, job *proto.Job, execution *proto.
 
 	// Initiate a connection with the server
 	// (MAYO): remove string type wrap
+	//
+	// 1. 建立 grpc connection
 	conn, err := grpcc.Connect(addr)
 	if err != nil {
 		grpcc.logger.WithError(err).WithFields(logrus.Fields{
@@ -407,6 +416,8 @@ func (grpcc *GRPCClient) AgentRun(addr string, job *proto.Job, execution *proto.
 	defer conn.Close()
 
 	// Streaming call
+	//
+	// 2. 封装 grpc client ，调用 rpc `AgentRun` 提交任务到 addr 节点上执行
 	a := proto.NewAgentClient(conn)
 	stream, err := a.AgentRun(context.Background(), &proto.AgentRunRequest{
 		Job:       job,
@@ -416,14 +427,14 @@ func (grpcc *GRPCClient) AgentRun(addr string, job *proto.Job, execution *proto.
 		return err
 	}
 
+	// 3. 实时接收执行状态
 	var first bool
 	for {
-		// 读取 GRPC 流
 		ars, err := stream.Recv()
 
 		// Stream ends
+		// 3.1 执行成功，发送 done 命令给 leader ，记录执行成功信息，返回
 		if err == io.EOF {
-			// 任务执行结束, 发送 done 命令给 leader 持久化储存
 			addr := grpcc.agent.raft.Leader()
 			if err := grpcc.ExecutionDone(string(addr), NewExecutionFromProto(execution)); err != nil {
 				return err
@@ -432,6 +443,7 @@ func (grpcc *GRPCClient) AgentRun(addr string, job *proto.Job, execution *proto.
 		}
 
 		// Error received from the stream
+		// 3.2 执行失败，发送 done 命令给 leader ，记录执行失败信息，返回
 		if err != nil {
 			// At this point the execution status will be unknown, set the FinshedAt time and an explanatory message
 			execution.FinishedAt = ptypes.TimestampNow()
@@ -439,17 +451,17 @@ func (grpcc *GRPCClient) AgentRun(addr string, job *proto.Job, execution *proto.
 
 			grpcc.logger.WithError(err).Error(ErrBrokenStream)
 
-			// [重要]
-			// ???
 			addr := grpcc.agent.raft.Leader()
 			if err := grpcc.ExecutionDone(string(addr), NewExecutionFromProto(execution)); err != nil {
 				return err
 			}
-
 			return err
 		}
 
+		// 3.3 执行中，记录 ars
+
 		// Registers an active stream
+		// 更新 execution 最新状态
 		grpcc.agent.activeExecutions.Store(ars.Execution.Key(), ars.Execution)
 		grpcc.logger.WithField("key", ars.Execution.Key()).Debug("grpc: received execution stream")
 
@@ -458,7 +470,7 @@ func (grpcc *GRPCClient) AgentRun(addr string, job *proto.Job, execution *proto.
 
 		// Store the received execution in the raft log and store
 		if !first {
-			// 储存执行状态
+			// 4. 从 stream 中收到的首个消息，是 exec 执行前的初始状态，这里转发给 leader 让其记录下这个状态。
 			if err := grpcc.SetExecution(ars.Execution); err != nil {
 				return err
 			}

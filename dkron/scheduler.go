@@ -134,7 +134,7 @@ func (s *Scheduler) AddJob(job *Job) error {
 		schedule = "CRON_TZ=" + job.Timezone + " " + schedule
 	}
 
-	// 为 cron 添加一个 job ，当定时器触发时会回调 Job.Run() 方法。
+	// 注册 job 到 cron ，当定时器触发时会回调 Job.Run() 方法。
 	id, err := s.Cron.AddJob(schedule, job)
 	if err != nil {
 		return err
@@ -155,6 +155,7 @@ func (s *Scheduler) RemoveJob(job *Job) {
 		"job": job.Name,
 	}).Debug("scheduler: Removing job from cron")
 	if v, ok := s.EntryJobMap.Load(job.Name); ok {
+		// 从 cron 中移除
 		s.Cron.Remove(v.(cron.EntryID))
 		s.EntryJobMap.Delete(job.Name)
 

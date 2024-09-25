@@ -95,7 +95,6 @@ func NewStore(logger *logrus.Entry) (*Store, error) {
 func (s *Store) setJobTxFunc(pbj *dkronpb.Job) func(tx *buntdb.Tx) error {
 	return func(tx *buntdb.Tx) error {
 		jobKey := fmt.Sprintf("%s:%s", jobsPrefix, pbj.Name)
-
 		// json 序列化
 		// 备注: 都已经是 proto struct 了, 序列化成 protobuf 不就好了吗?
 		jb, err := json.Marshal(pbj)
@@ -103,12 +102,10 @@ func (s *Store) setJobTxFunc(pbj *dkronpb.Job) func(tx *buntdb.Tx) error {
 			return err
 		}
 		s.logger.WithField("job", pbj.Name).Debug("store: Setting job")
-
 		// 储存到 db
 		if _, _, err := tx.Set(jobKey, string(jb), nil); err != nil {
 			return err
 		}
-
 		return nil
 	}
 }
@@ -186,7 +183,8 @@ func (s *Store) SetJob(job *Job, copyDependentJobs bool) error {
 
 		// 把 *Job 转换为 *proto.Job 对象
 		pbj := job.ToProto()
-		// 将 *proto.Job 对象序列化后存储到 store 中，key = "jobs:{job}"
+
+		// 将 *proto.Job 对象序列化后存储到 store 中，key = "jobs:{job_name}"
 		s.setJobTxFunc(pbj)(tx)
 		return nil
 	})
@@ -398,7 +396,6 @@ func (s *Store) GetJob(name string, options *JobOptions) (*Job, error) {
 // 返回 func 接收 tx 作为参数, 复用一个事务
 func (s *Store) getJobTxFunc(name string, pbj *dkronpb.Job) func(tx *buntdb.Tx) error {
 	return func(tx *buntdb.Tx) error {
-		// 查找不到会返回 ErrNotFound
 		item, err := tx.Get(fmt.Sprintf("%s:%s", jobsPrefix, name))
 		if err != nil {
 			return err

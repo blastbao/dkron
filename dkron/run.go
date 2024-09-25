@@ -10,9 +10,7 @@ import (
 // Run call the agents to run a job. Returns a job with it's new status and next schedule.
 //
 // [重要]
-// 调度运行 Job -> 分发到 agent 执行任务
-//
-// - 计算下一次执行时间，然后更新任务到 store
+// 把 job 分发到 agent 来执行
 func (a *Agent) Run(jobName string, ex *Execution) (*Job, error) {
 	// 1. 从 store 获取任务详情
 	job, err := a.Store.GetJob(jobName, nil)

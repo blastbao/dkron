@@ -50,12 +50,11 @@ func NewAgentServer(agent *Agent, logger *logrus.Entry) types.AgentServer {
 // AgentRun is called when an agent starts running a job and lasts all execution,
 // the agent will stream execution progress to the server.
 //
-// AgentRun 在 agent 开始运行作业时被调用，并持续整个执行过程，agent 将实时将执行进度流式传输到服务器。
+// AgentRun 在 agent 开始执行 job 时被调用，此函数持续整个执行过程，实时地将执行进度通过 stream 流返回调用者。
 func (as *AgentServer) AgentRun(req *types.AgentRunRequest, stream types.Agent_AgentRunServer) error {
 	defer metrics.MeasureSince([]string{"grpc_agent", "agent_run"}, time.Now())
 
-	job := req.Job
-	execution := req.Execution
+	job, execution := req.Job, req.Execution
 
 	as.logger.WithFields(logrus.Fields{
 		"job": job.Name,
@@ -67,10 +66,11 @@ func (as *AgentServer) AgentRun(req *types.AgentRunRequest, stream types.Agent_A
 	exc := job.ExecutorConfig
 
 	// Send the first update with the initial execution state to be stored in the server
-	execution.StartedAt = ptypes.TimestampNow()
-	execution.NodeName = as.agent.config.NodeName
+	// 补全 exec 信息，存储到
+	execution.StartedAt = ptypes.TimestampNow()   // 开始时间
+	execution.NodeName = as.agent.config.NodeName // 执行节点
 
-	// 发送执行前状态
+	// 发送 exec 初始状态
 	if err := stream.Send(&types.AgentRunStream{
 		Execution: execution,
 	}); err != nil {
@@ -85,6 +85,7 @@ func (as *AgentServer) AgentRun(req *types.AgentRunRequest, stream types.Agent_A
 	if executor, ok := as.agent.ExecutorPlugins[jex]; ok {
 		as.logger.WithField("plugin", jex).Debug("grpc_agent: calling executor plugin")
 		runningExecutions.Store(execution.GetGroup(), execution)
+
 		// go-plugin grpc 调用执行
 		out, err := executor.Execute(&types.ExecuteRequest{
 			JobName: job.Name,
@@ -115,14 +116,14 @@ func (as *AgentServer) AgentRun(req *types.AgentRunRequest, stream types.Agent_A
 		output.Write([]byte("grpc_agent: Specified executor is not present"))
 	}
 
-	// 执行完成
+	// 执行完成，补全 exec 信息
 	execution.FinishedAt = ptypes.TimestampNow()
 	execution.Success = success
 	execution.Output = output.Bytes()
 
 	runningExecutions.Delete(execution.GetGroup())
 
-	// 发送最终状态
+	// 发送 exec 完成状态
 	// Send the final execution
 	if err := stream.Send(&types.AgentRunStream{
 		Execution: execution,
@@ -130,12 +131,12 @@ func (as *AgentServer) AgentRun(req *types.AgentRunRequest, stream types.Agent_A
 		// 有可能 server 没能接收到最后执行状态
 		// In case of error means that maybe the server is gone so fallback to ExecutionDone
 		as.logger.WithError(err).WithField("job", job.Name).Error("grpc_agent: error sending the final execution, falling back to ExecutionDone")
-		// TCP 连接筛选一个 server
+		// 从 peer 中挑选一个能够联通的 node
 		rpcServer, err := as.agent.checkAndSelectServer()
 		if err != nil {
 			return err
 		}
-		// 调用执行完成
+		// 调用 `ExecutionDone` rpc 到 peer ，如果它不是 leader 它会转发给 leader ，leader 会落 fsm
 		return as.agent.GRPCClient.ExecutionDone(rpcServer, NewExecutionFromProto(execution))
 	}
 

@@ -230,6 +230,7 @@ func (h *HTTPTransport) jobGetHandler(c *gin.Context) {
 	renderJSON(c, http.StatusOK, job)
 }
 
+// [重要]
 func (h *HTTPTransport) jobCreateOrUpdateHandler(c *gin.Context) {
 	// Init the Job object with defaults
 	job := Job{
