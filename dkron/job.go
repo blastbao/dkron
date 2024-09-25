@@ -227,6 +227,7 @@ func (j *Job) ToProto() *proto.Job {
 // [重要]
 // job 的 run 方法实现 cron.Job 接口
 func (j *Job) Run() {
+
 	// As this function should comply with the Job interface of the cron package we will use
 	// the agent property on execution, this is why it need to check if it's set and otherwise fail.
 	if j.Agent == nil {
@@ -245,7 +246,7 @@ func (j *Job) Run() {
 		// Simple execution wrapper
 		ex := NewExecution(j.Name) // execution 是 job 的运行时封装
 
-		// 触发调度运行 Job
+		// 将 job 提交给 agent 来运行，
 		if _, err := j.Agent.Run(j.Name, ex); err != nil {
 			j.logger.WithError(err).Error("job: Error running job")
 		}
@@ -300,9 +301,7 @@ func (j *Job) GetNext() (time.Time, error) {
 	return time.Time{}, nil
 }
 
-// 判断 job 是否在执行中。
-//
-// 通过 agent 拉取整个 serf 集群中每个 server 正在执行的 executions ，如果其中包含 job ，则为正在执行中。
+// 判断 job 是否可执行：如果 job 未在执行，返回 true ；如果 job 正在执行，且允许并发执行，返回 true ，否则 false 。
 func (j *Job) isRunnable(logger *logrus.Entry) bool {
 	if j.Disabled {
 		return false
@@ -316,16 +315,15 @@ func (j *Job) isRunnable(logger *logrus.Entry) bool {
 
 	// 禁止并发执行
 	if j.Concurrency == ConcurrencyForbid {
-		// 通过 GRPC 调取获取所有节点正在执行的任务, 只是调度任务的时候检查是否同时执行
+		// 获取 serf 集群中每个节点正在执行的任务 executions
 		exs, err := j.Agent.GetActiveExecutions()
 		if err != nil {
 			logger.WithError(err).Error("job: Error quering for running executions")
 			return false
 		}
 
+		// 判断是否有当前 job 正在执行，如果有且当前禁用了并发执行，就返回 false
 		for _, e := range exs {
-			// 如果有正在执行的任务就跳过执行
-			// 理论上只有一个 leader 运行调度器, 控制任务不会被同时调度执行
 			if e.JobName == j.Name {
 				logger.WithFields(logrus.Fields{
 					"job":         j.Name,
@@ -342,34 +340,41 @@ func (j *Job) isRunnable(logger *logrus.Entry) bool {
 
 // Validate validates whether all values in the job are acceptable.
 func (j *Job) Validate() error {
+	// 名称不能为空
 	if j.Name == "" {
 		return fmt.Errorf("name cannot be empty")
 	}
 
+	// 名称格式是否合法
 	if valid, chr := isSlug(j.Name); !valid {
 		return fmt.Errorf("name contains illegal character '%s'", chr)
 	}
 
+	// 父作业与当前作业的 Name 相同
 	if j.ParentJob == j.Name {
 		return ErrSameParent
 	}
 
 	// Validate schedule, allow empty schedule if parent job set.
+	// 如果作业的 Schedule 不空、或 ParentJob 为空（即无父作业），则校验 Schedule 合法性
 	if j.Schedule != "" || j.ParentJob == "" {
 		if _, err := extcron.Parse(j.Schedule); err != nil {
 			return fmt.Errorf("%s: %s", ErrScheduleParse.Error(), err)
 		}
 	}
 
+	// 合法的 Concurrency 策略要求是 ConcurrencyAllow、ConcurrencyForbid，以及空字符串（表示未设置）
 	if j.Concurrency != ConcurrencyAllow && j.Concurrency != ConcurrencyForbid && j.Concurrency != "" {
 		return ErrWrongConcurrency
 	}
 
 	// An empty string is a valid timezone for LoadLocation
+	//  验证 Timezone 字段是否为有效的时区，空字符串也是合法的
 	if _, err := time.LoadLocation(j.Timezone); err != nil {
 		return err
 	}
 
+	// 如果是 "shell" 且 timeout 不为空，验证时间格式
 	if j.Executor == "shell" && j.ExecutorConfig["timeout"] != "" {
 		_, err := time.ParseDuration(j.ExecutorConfig["timeout"])
 		if err != nil {
@@ -408,6 +413,8 @@ func generateJobTree(jobs []*Job) ([]*Job, error) {
 }
 
 // findParentJobAndValidateJob...
+//
+
 func findParentJobAndValidateJob(jobs []*Job, index int) ([]*Job, bool, error) {
 	childJob := jobs[index]
 	// Validate job

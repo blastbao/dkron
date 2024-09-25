@@ -275,7 +275,7 @@ func (h *HTTPTransport) jobCreateOrUpdateHandler(c *gin.Context) {
 func (h *HTTPTransport) jobDeleteHandler(c *gin.Context) {
 	jobName := c.Param("job")
 
-	// Call gRPC DeleteJob
+	// 调用 leader 的 `DeleteJob` 接口，执行结束后返回最新 job 信息
 	job, err := h.agent.GRPCClient.DeleteJob(jobName)
 	if err != nil {
 		c.AbortWithError(http.StatusNotFound, err)
@@ -287,7 +287,7 @@ func (h *HTTPTransport) jobDeleteHandler(c *gin.Context) {
 func (h *HTTPTransport) jobRunHandler(c *gin.Context) {
 	jobName := c.Param("job")
 
-	// Call gRPC RunJob
+	// 调用 leader 的 `RunJob` 接口，执行结束后返回最新 job 信息
 	job, err := h.agent.GRPCClient.RunJob(jobName)
 	if err != nil {
 		c.AbortWithError(http.StatusNotFound, err)
@@ -314,18 +314,21 @@ func (h *HTTPTransport) restoreHandler(c *gin.Context) {
 		return
 	}
 
+	// 解析出所有 jobs
 	var jobs []*Job
 	if err = json.Unmarshal(data, &jobs); err != nil {
 		c.AbortWithError(http.StatusBadRequest, err)
 		return
 	}
 
+	//
 	jobTree, err := generateJobTree(jobs)
 	if err != nil {
 		c.AbortWithError(http.StatusBadRequest, err)
 		return
 	}
 
+	// 获取 jobTree 中所有 job 以及 child job
 	result := h.agent.recursiveSetJob(jobTree)
 	resp, err := json.Marshal(result)
 	if err != nil {
@@ -416,6 +419,7 @@ func (h *HTTPTransport) leaveHandler(c *gin.Context) {
 func (h *HTTPTransport) jobToggleHandler(c *gin.Context) {
 	jobName := c.Param("job")
 
+	// 获取 job
 	job, err := h.agent.Store.GetJob(jobName, nil)
 	if err != nil {
 		c.AbortWithError(http.StatusNotFound, err)
@@ -423,20 +427,23 @@ func (h *HTTPTransport) jobToggleHandler(c *gin.Context) {
 	}
 
 	// Toggle job status
+	// 设置 job 字段
 	job.Disabled = !job.Disabled
 
 	// Call gRPC SetJob
+	// 更新 job
 	if err := h.agent.GRPCClient.SetJob(job); err != nil {
 		c.AbortWithError(http.StatusUnprocessableEntity, err)
 		return
 	}
 
+	// 返回最新 job 信息
 	c.Header("Location", c.Request.RequestURI)
 	renderJSON(c, http.StatusOK, job)
 }
 
 func (h *HTTPTransport) busyHandler(c *gin.Context) {
-	executions := []*Execution{}
+	var executions []*Execution
 
 	// 获取整个 serf 集群中每个 server 正在执行的 executions
 	exs, err := h.agent.GetActiveExecutions()

@@ -242,10 +242,10 @@ func (grpcc *GRPCClient) DeleteJob(jobName string) (*Job, error) {
 func (grpcc *GRPCClient) RunJob(jobName string) (*Job, error) {
 	var conn *grpc.ClientConn
 
-	// 让 leader 执行 job
+	// 取 leader 的 addr
 	addr := grpcc.agent.raft.Leader()
 
-	// Initiate a connection with the server
+	// 建立同 leader 的 grpc conn
 	conn, err := grpcc.Connect(string(addr))
 	if err != nil {
 		grpcc.logger.WithError(err).WithFields(logrus.Fields{
@@ -256,7 +256,7 @@ func (grpcc *GRPCClient) RunJob(jobName string) (*Job, error) {
 	}
 	defer conn.Close()
 
-	// Synchronous call
+	// 封装 grpc client ，并调用 `RunJob` rpc ，同步等待执行结果
 	d := proto.NewDkronClient(conn)
 	res, err := d.RunJob(context.Background(), &proto.RunJobRequest{
 		JobName: jobName,
@@ -269,6 +269,7 @@ func (grpcc *GRPCClient) RunJob(jobName string) (*Job, error) {
 		return nil, err
 	}
 
+	// 返回最新 job 信息
 	job := NewJobFromProto(res.Job)
 	return job, nil
 }

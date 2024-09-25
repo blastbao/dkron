@@ -137,18 +137,20 @@ func (d *dkronFSM) applySetExecution(buf []byte) interface{} {
 	return key
 }
 
-// FSM 的快照和恢复方法，使用 buntdb 的 load/save 方法。
-
 // Snapshot returns a snapshot of the key-value store. We wrap
 // the things we need in dkronSnapshot and then send that over to Persist.
 // Persist encodes the needed data from dkronSnapshot and transport it to
 // Restore where the necessary data is replicated into the finite state machine.
 // This allows the consensus algorithm to truncate the replicated log.
+//
+// Snapshot 返回 fsm 的快照，本质就是取 store 的快照
 func (d *dkronFSM) Snapshot() (raft.FSMSnapshot, error) {
 	return &dkronSnapshot{store: d.store}, nil
 }
 
 // Restore stores the key-value store to a previous state.
+//
+// Restore 从快照中恢复 fsm ，本质上是在恢复 store
 func (d *dkronFSM) Restore(r io.ReadCloser) error {
 	defer r.Close()
 	return d.store.Restore(r)
@@ -163,12 +165,10 @@ func (d *dkronSnapshot) Persist(sink raft.SnapshotSink) error {
 		sink.Cancel()
 		return err
 	}
-
 	// Close the sink.
 	if err := sink.Close(); err != nil {
 		return err
 	}
-
 	return nil
 }
 

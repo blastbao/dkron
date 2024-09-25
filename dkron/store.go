@@ -584,8 +584,8 @@ func (s *Store) SetExecution(execution *Execution) (string, error) {
 		"finished":  execution.FinishedAt.String(),
 	}).Debug("store: Setting key")
 
+	// 保存到数据库
 	err := s.db.Update(s.setExecutionTxFunc(key, pbe))
-
 	if err != nil {
 		s.logger.WithError(err).WithFields(logrus.Fields{
 			"job":       execution.JobName,
@@ -594,20 +594,21 @@ func (s *Store) SetExecution(execution *Execution) (string, error) {
 		return "", err
 	}
 
+	// 获取作业的所有执行记录
 	execs, err := s.GetExecutions(execution.JobName, &ExecutionOptions{})
-	if err != nil && err != buntdb.ErrNotFound {
-		s.logger.WithError(err).
-			WithField("job", execution.JobName).
+	if err != nil && !errors.Is(err, buntdb.ErrNotFound) {
+		s.logger.WithError(err).WithField("job", execution.JobName).
 			Error("store: Error getting executions for job")
 	}
 
 	// Delete all execution results over the limit, starting from olders
+	//
+	// 如果执行记录的数量超过了 MaxExecutions，则按 StartedAt（开始时间）对记录进行排序，从最早的记录开始删除。
 	if len(execs) > MaxExecutions {
 		//sort the array of all execution groups by StartedAt time
 		sort.Slice(execs, func(i, j int) bool {
 			return execs[i].StartedAt.Before(execs[j].StartedAt)
 		})
-
 		for i := 0; i < len(execs)-MaxExecutions; i++ {
 			s.logger.WithFields(logrus.Fields{
 				"job":       execs[i].JobName,
@@ -619,8 +620,7 @@ func (s *Store) SetExecution(execution *Execution) (string, error) {
 				return err
 			})
 			if err != nil {
-				s.logger.WithError(err).
-					WithField("execution", execs[i].Key()).
+				s.logger.WithError(err).WithField("execution", execs[i].Key()).
 					Error("store: Error trying to delete overflowed execution")
 			}
 		}
@@ -656,6 +656,8 @@ func (s *Store) Shutdown() error {
 
 // Snapshot creates a backup of the data stored in BuntDB
 func (s *Store) Snapshot(w io.WriteCloser) error {
+	// Save 负责将数据库的快照写入到 io.Writer 中，用于备份。
+	// Save 会阻塞写操作，但不会影响读取。
 	return s.db.Save(w)
 }
 

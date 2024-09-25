@@ -162,14 +162,12 @@ func (grpcs *GRPCServer) GetJob(ctx context.Context, getJobReq *proto.GetJobRequ
 	gjr.Job.Name = j.Name
 	gjr.Job.Executor = j.Executor
 	gjr.Job.ExecutorConfig = j.ExecutorConfig
-
 	return gjr, nil
 }
 
 // ExecutionDone saves the execution to the store
 // [重要]
-//
-//	执行完成, 进行后续处理
+// 执行完成, 进行后续处理
 func (grpcs *GRPCServer) ExecutionDone(ctx context.Context, execDoneReq *proto.ExecutionDoneRequest) (*proto.ExecutionDoneResponse, error) {
 	defer metrics.MeasureSince([]string{"grpc", "execution_done"}, time.Now())
 	grpcs.logger.WithFields(logrus.Fields{
@@ -311,12 +309,10 @@ func (grpcs *GRPCServer) ToggleJob(ctx context.Context, getJobReq *proto.ToggleJ
 }
 
 // RaftGetConfiguration get raft config
-//
 // 获取 Raft 集群的服务器状态以及配置信息，并返回给调用者。
 func (grpcs *GRPCServer) RaftGetConfiguration(ctx context.Context, in *empty.Empty) (*proto.RaftGetConfigurationResponse, error) {
 	// We can't fetch the leader and the configuration atomically with
 	// the current Raft API.
-	//
 	// 获取 raft 配置
 	future := grpcs.agent.raft.GetConfiguration()
 	if err := future.Error(); err != nil {
@@ -324,7 +320,6 @@ func (grpcs *GRPCServer) RaftGetConfiguration(ctx context.Context, in *empty.Emp
 	}
 
 	// Index the information about the servers.
-	//
 	// 获取 serf members
 	serverMap := make(map[raft.ServerAddress]serf.Member)
 	for _, member := range grpcs.agent.serf.Members() {
@@ -337,7 +332,6 @@ func (grpcs *GRPCServer) RaftGetConfiguration(ctx context.Context, in *empty.Emp
 	}
 
 	// Fill out the reply.
-	//
 	// 构造 reply
 	leader := grpcs.agent.raft.Leader()
 	reply := &proto.RaftGetConfigurationResponse{}
@@ -353,7 +347,7 @@ func (grpcs *GRPCServer) RaftGetConfiguration(ctx context.Context, in *empty.Emp
 				raftProtocolVersion = raftVsn
 			}
 		}
-		// 把 raft server 和 serf member 的信息组合起来，存入 reply
+		// 把 raft server 和 serf member 的信息组装后存入 reply
 		reply.Servers = append(reply.Servers, &proto.RaftServer{
 			Id:           string(server.ID),
 			Node:         node,
@@ -371,11 +365,13 @@ func (grpcs *GRPCServer) RaftGetConfiguration(ctx context.Context, in *empty.Emp
 // "IP:port". The reply argument is not used, but is required to fulfill the RPC
 // interface.
 //
-// 从 Raft 集群中移除一个失效的节点。
+// 从 Raft 集群中移除 in.Id 节点。
 func (grpcs *GRPCServer) RaftRemovePeerByID(ctx context.Context, in *proto.RaftRemovePeerByIDRequest) (*empty.Empty, error) {
 	// Since this is an operation designed for humans to use, we will return
 	// an error if the supplied id isn't among the peers since it's
 	// likely they screwed up.
+	//
+	// 如果 in.Id 节点不存在于 raft servers 中，则报错
 	{
 		future := grpcs.agent.raft.GetConfiguration()
 		if err := future.Error(); err != nil {
@@ -434,14 +430,14 @@ func (grpcs *GRPCServer) SetExecution(ctx context.Context, execution *proto.Exec
 		"execution": execution.Key(),
 	}).Debug("grpc: Received SetExecution")
 
-	// 构造 Raft Msg := MsgType(1B) + MsgData
+	// 1. 构造 Raft Msg := MsgType(1B) + MsgData
 	cmd, err := Encode(SetExecutionType, execution)
 	if err != nil {
 		grpcs.logger.WithError(err).Fatal("agent: encode error in SetExecution")
 		return nil, err
 	}
 
-	// 通过 raft apply 同步集群状态
+	// 2. 通过 raft apply 应用到 fsm
 	af := grpcs.agent.raft.Apply(cmd, raftTimeout)
 	if err := af.Error(); err != nil {
 		grpcs.logger.WithError(err).Fatal("agent: error applying SetExecutionType")

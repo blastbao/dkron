@@ -7,7 +7,8 @@ import (
 	"github.com/hashicorp/serf/serf"
 )
 
-// Run call the agents to run a job. Returns a job with it's new status and next schedule.
+// Run call the agents to run a job.
+// Returns a job with it's new status and next schedule.
 //
 // [重要]
 // 把 job 分发到 agent 来执行
