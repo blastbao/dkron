@@ -260,7 +260,7 @@ func (s *Store) addToParent(child *Job) error {
 func (s *Store) SetExecutionDone(execution *Execution) (bool, error) {
 	err := s.db.Update(func(tx *buntdb.Tx) error {
 		// Load the job from the store
-		// 从 store 中查找 job
+		// 从 db 中查找 job
 		var pbj dkronpb.Job
 		if err := s.getJobTxFunc(execution.JobName, &pbj)(tx); err != nil {
 			if err == buntdb.ErrNotFound {
@@ -275,7 +275,7 @@ func (s *Store) SetExecutionDone(execution *Execution) (bool, error) {
 		key := fmt.Sprintf("%s:%s:%s", executionsPrefix, execution.JobName, execution.Key())
 
 		// Save the execution to store
-		// 把 execution 保存到 store
+		// 把 execution 保存到 db
 		pbe := execution.ToProto()
 		if err := s.setExecutionTxFunc(key, pbe)(tx); err != nil {
 			return err
@@ -299,7 +299,7 @@ func (s *Store) SetExecutionDone(execution *Execution) (bool, error) {
 		}
 		pbj.Status = status
 
-		// 向 store 中写入(更新) job
+		// 向 db 中写入(更新) job
 		if err := s.setJobTxFunc(&pbj)(tx); err != nil {
 			return err
 		}

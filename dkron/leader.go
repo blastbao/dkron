@@ -207,7 +207,7 @@ func (a *Agent) revokeLeadership() error {
 }
 
 // addRaftPeer is used to add a new Raft peer when a dkron server joins
-// 当一个新的 dkron 服务器（即一个 Serf 节点）加入时，会执行 addRaftPeer 函数，用于将该节点添加为 Raft 集群中的一个 Peer 节点。
+// 当一个新的 dkron 服务器（即一个 Serf 节点）加入时，leader 会执行 addRaftPeer 函数，用于将该节点添加为 Raft 集群中的一个 Peer 节点。
 //
 //	首先，在添加节点之前会检查当前集群中是否已经存在一个处于 Bootstrap 模式的节点。
 //	如果存在，则不允许再添加新的节点。这是由于当多个节点同时处于 Bootstrap 模式时，可能会导致集群状态不一致或者发生脑裂等问题。
